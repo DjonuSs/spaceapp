@@ -11,6 +11,12 @@
  * request.
  */
 
+export interface SpanLink {
+  traceId: string;
+  spanId: string;
+  attributes?: Readonly<Record<string, string | number>>;
+}
+
 export interface ServerSpan {
   traceId: string;
   spanId: string;
@@ -20,8 +26,10 @@ export interface ServerSpan {
   endTimeUnixNano: bigint;
   attributes: Readonly<Record<string, string | number>>;
   error: boolean;
-  /** OTLP span kind; SERVER (2) unless given. Worker activities use INTERNAL (1). */
+  /** OTLP span kind; SERVER (2) unless given. Worker workflows and activities use INTERNAL (1). */
   kind?: number;
+  /** Optional OTLP span links (for continueAsNew runs and background continuations). */
+  links?: ReadonlyArray<SpanLink>;
 }
 
 export interface SpanExporterStats {
@@ -53,6 +61,71 @@ const hexId = (length: number) => new RegExp(`^[0-9a-f]{${length}}$`);
 const traceIdPattern = hexId(32);
 const spanIdPattern = hexId(16);
 
+export const ALLOWED_SPAN_ATTRIBUTE_KEYS = [
+  "http.request.method",
+  "http.route",
+  "http.response.status_code",
+  "space.request_id",
+  "space.trace_id",
+  "space.parent_trace_id",
+  "space.workflow_id",
+  "space.run_id",
+  "space.workflow_type",
+  "space.activity_type",
+  "space.activity_id",
+  "space.attempt",
+  "space.outcome",
+  "space.status",
+  "space.error_code",
+  "space.failure_category",
+  "space.room_id",
+  "space.pane_id",
+  "space.mission_id",
+  "space.agent_run_id",
+  "space.agent_session_id",
+  "space.action_id",
+  "space.goal_id",
+  "space.dot_id",
+  "space.turn_id",
+  "space.cli_task_id",
+  "space.revision_id",
+  "space.change_set_id",
+  "space.duration_ms",
+  "space.queue_ms",
+  "space.continuation_of_run_id",
+  "space.link_kind"
+] as const;
+
+export type AllowedSpanAttributeKey = (typeof ALLOWED_SPAN_ATTRIBUTE_KEYS)[number];
+
+const allowedSpanAttributeKeySet = new Set<string>(ALLOWED_SPAN_ATTRIBUTE_KEYS);
+const allowedHttpMethods = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+const routeTemplatePattern = /^(\/[A-Za-z0-9:._/-]{0,239}|unmatched)$/;
+const safeSpanIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,239}$/;
+
+function isSafeAttributeValue(key: string, value: unknown): value is string | number {
+  if (!allowedSpanAttributeKeySet.has(key)) return false;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "string") return false;
+  if (key === "http.request.method") return allowedHttpMethods.has(value);
+  if (key === "http.route") return routeTemplatePattern.test(value) && !value.includes("..") && !value.includes("//");
+  return safeSpanIdentifierPattern.test(value) && !value.includes("..");
+}
+
+/** Filters span attributes to allowlisted keys and safe identifier/numeric values only. */
+export function sanitizeSpanAttributes(
+  attributes: Readonly<Record<string, unknown>> | undefined
+): Record<string, string | number> {
+  const sanitized: Record<string, string | number> = {};
+  if (!attributes) return sanitized;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (isSafeAttributeValue(key, value)) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 /** The collector base URL, or null when export is off or the value is unsafe. */
 export function otlpTracesUrl(value: string | undefined): string | null {
   if (!value?.trim()) return null;
@@ -70,24 +143,49 @@ function attributeValue(value: string | number) {
   return typeof value === "number" && Number.isInteger(value) ? { intValue: String(value) } : { stringValue: String(value) };
 }
 
+function serializeAttributes(attributes: Readonly<Record<string, unknown>> | undefined) {
+  return Object.entries(sanitizeSpanAttributes(attributes)).map(([key, value]) => ({
+    key,
+    value: attributeValue(value)
+  }));
+}
+
+function serializeLinks(links: ReadonlyArray<SpanLink> | undefined) {
+  if (!links?.length) return [];
+  return links
+    .filter((link) => traceIdPattern.test(link.traceId) && spanIdPattern.test(link.spanId))
+    .map((link) => {
+      const attributes = serializeAttributes(link.attributes);
+      return {
+        traceId: link.traceId,
+        spanId: link.spanId,
+        ...(attributes.length ? { attributes } : {})
+      };
+    });
+}
+
 export function otlpTraceRequest(spans: readonly ServerSpan[], serviceName: string) {
   return {
     resourceSpans: [{
       resource: { attributes: [{ key: "service.name", value: { stringValue: serviceName } }] },
       scopeSpans: [{
         scope: { name: serviceName },
-        spans: spans.map(span => ({
-          traceId: span.traceId,
-          spanId: span.spanId,
-          ...(span.parentSpanId ? { parentSpanId: span.parentSpanId } : {}),
-          name: span.name,
-          kind: span.kind ?? 2,
-          startTimeUnixNano: span.startTimeUnixNano.toString(),
-          endTimeUnixNano: span.endTimeUnixNano.toString(),
-          attributes: Object.entries(span.attributes).map(([key, value]) => ({ key, value: attributeValue(value) })),
-          // STATUS_CODE_ERROR or STATUS_CODE_UNSET
-          status: { code: span.error ? 2 : 0 }
-        }))
+        spans: spans.map(span => {
+          const links = serializeLinks(span.links);
+          return {
+            traceId: span.traceId,
+            spanId: span.spanId,
+            ...(span.parentSpanId && spanIdPattern.test(span.parentSpanId) ? { parentSpanId: span.parentSpanId } : {}),
+            name: span.name,
+            kind: span.kind ?? 2,
+            startTimeUnixNano: span.startTimeUnixNano.toString(),
+            endTimeUnixNano: span.endTimeUnixNano.toString(),
+            attributes: serializeAttributes(span.attributes),
+            ...(links.length ? { links } : {}),
+            // STATUS_CODE_ERROR or STATUS_CODE_UNSET
+            status: { code: span.error ? 2 : 0 }
+          };
+        })
       }]
     }]
   };
@@ -142,7 +240,11 @@ export function createOtlpSpanExporter(options: OtlpSpanExporterOptions): SpanEx
         stats.dropped += 1;
         return;
       }
-      queue.push(span);
+      queue.push({
+        ...span,
+        parentSpanId: span.parentSpanId && spanIdPattern.test(span.parentSpanId) ? span.parentSpanId : null,
+        attributes: sanitizeSpanAttributes(span.attributes)
+      });
       if (queue.length >= batchSize) void flush();
     },
     flush,

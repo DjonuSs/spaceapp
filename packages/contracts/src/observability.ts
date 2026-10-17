@@ -120,6 +120,38 @@ export function traceIdFromTraceparent(value: unknown): string | null {
   return parseTraceparent(value)?.traceId ?? null;
 }
 
+function mix64(seed: string, salt: number): [number, number] {
+  let h1 = (0xdeadbeef ^ seed.length ^ salt) >>> 0;
+  let h2 = (0x41c6ce57 ^ seed.length ^ Math.imul(salt, 0x9e3779b1)) >>> 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    const ch = seed.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761) >>> 0;
+    h2 = Math.imul(h2 ^ ch, 1597334677) >>> 0;
+  }
+  h1 = (Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)) >>> 0;
+  h2 = (Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)) >>> 0;
+  return [h1 >>> 0, (h2 >>> 0) || 1];
+}
+
+/**
+ * Pure, replay-safe 16-hex span id derived deterministically from a workflow/activity
+ * identity string without touching Math.random, uuid4 or Node crypto.
+ */
+export function deterministicSpanId(seed: string): string {
+  const [hi, lo] = mix64(seed, 1);
+  return `${hi.toString(16).padStart(8, "0")}${lo.toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * Pure, replay-safe 32-hex W3C trace id derived deterministically from a Space
+ * correlation or workflow identity when no inbound W3C traceparent was supplied.
+ */
+export function deterministicTraceId(seed: string): string {
+  const [a, b] = mix64(seed, 1);
+  const [c, d] = mix64(seed, 2);
+  return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}${c.toString(16).padStart(8, "0")}${d.toString(16).padStart(8, "0")}`;
+}
+
 /**
  * Admin trace lookup (GET /api/admin/traces/:traceId). Identifiers, codes,
  * statuses and timestamps only: event messages, payload metadata, prompts and

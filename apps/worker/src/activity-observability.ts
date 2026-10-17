@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import type { Context } from "@temporalio/activity";
+import { defaultPayloadConverter, type Headers } from "@temporalio/common";
 import type { ActivityInterceptorsFactory } from "@temporalio/worker";
 import {
   categorizeFailureCode,
@@ -8,11 +9,24 @@ import {
   isSafeErrorCode,
   parseTraceparent,
   traceIdFromTraceparent,
-  type FailureCategory
+  type FailureCategory,
+  type ParsedTraceparent
 } from "@space/contracts";
-import type { SpanExporter } from "@space/runtime";
+import type { SpanExporter, SpanLink } from "@space/runtime";
 import { logIdentifier, workerLog, type WorkerLogValue } from "./worker-log.js";
 import { workerMetrics, type WorkerMetrics } from "./worker-metrics.js";
+import {
+  SPACE_CONTINUATION_OF_RUN_ID_HEADER,
+  SPACE_GOAL_ID_HEADER,
+  SPACE_LINK_KIND_HEADER,
+  SPACE_LINK_TRACEPARENT_HEADER,
+  SPACE_MISSION_ID_HEADER,
+  SPACE_PANE_ID_HEADER,
+  SPACE_PARENT_TRACE_ID_HEADER,
+  SPACE_ROOM_ID_HEADER,
+  SPACE_TRACEPARENT_HEADER,
+  SPACE_TRACE_ID_HEADER
+} from "./workflow-observability-interceptors.js";
 
 /**
  * One structured start/finish record and metrics per activity execution, with
@@ -30,9 +44,17 @@ export type ActivityOutcome = "COMPLETED" | "FAILED_RESULT" | "FAILED" | "CANCEL
 
 interface ActivityObservation {
   reasonCode: string | null;
+  activeTraceparent: ParsedTraceparent | null;
 }
 
 const observations = new AsyncLocalStorage<ActivityObservation>();
+
+function randomSpanId(): string {
+  for (;;) {
+    const id = randomBytes(8).toString("hex");
+    if (!/^0+$/.test(id)) return id;
+  }
+}
 
 /**
  * Called by failure recorders (for example recordCodexAppServerTurnFailure)
@@ -51,17 +73,19 @@ export function noteActivityFailureReason(reasonCode: string): void {
 export function failureReasonScope<T>(execute: () => Promise<T>): { promise: Promise<T>; reasonCode: () => string | null } {
   const existing = observations.getStore();
   if (existing) return { promise: execute(), reasonCode: () => existing.reasonCode };
-  const observation: ActivityObservation = { reasonCode: null };
+  const observation: ActivityObservation = { reasonCode: null, activeTraceparent: null };
   return { promise: observations.run(observation, execute), reasonCode: () => observation.reasonCode };
 }
 
-/** traceparent for an outbound call: same W3C trace, new span id; null if none. */
+/** traceparent for an outbound call: uses the active activity span when in the same trace, otherwise a new child span id. */
 export function childTraceparent(traceparent: string | null | undefined): string | null {
   const parsed = parseTraceparent(traceparent);
   if (!parsed) return null;
-  let spanId = randomBytes(8).toString("hex");
-  while (/^0+$/.test(spanId)) spanId = randomBytes(8).toString("hex");
-  return formatTraceparent(parsed.traceId, spanId, parsed.flags);
+  const active = observations.getStore()?.activeTraceparent;
+  if (active && active.traceId === parsed.traceId) {
+    return formatTraceparent(active.traceId, active.parentId, active.flags);
+  }
+  return formatTraceparent(parsed.traceId, randomSpanId(), parsed.flags);
 }
 
 // Keys whose values are identifiers. Prompts, content and messages are never read.
@@ -80,7 +104,8 @@ const correlationKeys = [
   "dotId",
   "turnId",
   "cliTaskId",
-  "revisionId"
+  "revisionId",
+  "changeSetId"
 ] as const;
 const nestedKeys = ["turn", "item", "bridge", "input", "turnInput"] as const;
 
@@ -96,6 +121,21 @@ function readCorrelation(value: unknown, into: Partial<Record<CorrelationKey, st
   }
   if (depth <= 0) return;
   for (const key of nestedKeys) readCorrelation(record[key], into, depth - 1);
+}
+
+function readContinuationSourceRunId(value: unknown, depth: number): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.roomAgentContinuation && typeof record.roomAgentContinuation === "object") {
+    const sourceRunId = logIdentifier((record.roomAgentContinuation as Record<string, unknown>).sourceRunId);
+    if (sourceRunId) return sourceRunId;
+  }
+  if (depth <= 0) return null;
+  for (const key of nestedKeys) {
+    const nested = readContinuationSourceRunId(record[key], depth - 1);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 /** Allowlisted correlation fields from activity arguments (identifiers only). */
@@ -135,15 +175,48 @@ export interface ObserveActivityDependencies {
   metrics?: WorkerMetrics;
   now?: () => number;
   cancelled?: () => boolean;
-  /** OTLP export (SPACE_OTEL_EXPORTER_OTLP_ENDPOINT): one span per activity whose input carries a traceparent. */
+  /** OTLP export (SPACE_OTEL_EXPORTER_OTLP_ENDPOINT): one span per activity whose input or workflow header carries a traceparent. */
   spans?: SpanExporter | null;
+  headers?: Headers;
 }
 
-function activityTraceparent(args: readonly unknown[]) {
+function readHeaderString(headers: Headers | undefined, key: string): string | null {
+  const payload = headers?.[key];
+  if (!payload) return null;
+  if (typeof (payload as unknown) === "string") return payload as unknown as string;
+  try {
+    const decoded = defaultPayloadConverter.fromPayload(payload);
+    return typeof decoded === "string" ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function activityTraceparent(args: readonly unknown[], headers?: Headers) {
+  const headerTp = parseTraceparent(
+    readHeaderString(headers, SPACE_TRACEPARENT_HEADER) ?? readHeaderString(headers, "traceparent")
+  );
+  if (headerTp) return headerTp;
   const found: Partial<Record<CorrelationKey, string>> = {};
   for (const arg of args) readCorrelation(arg, found, 2);
   return parseTraceparent(found.traceparent);
 }
+
+const spanCorrelationAttributeMap: ReadonlyArray<readonly [string, string]> = [
+  ["traceId", "space.trace_id"],
+  ["parentTraceId", "space.parent_trace_id"],
+  ["roomId", "space.room_id"],
+  ["paneId", "space.pane_id"],
+  ["missionId", "space.mission_id"],
+  ["agentRunId", "space.agent_run_id"],
+  ["agentSessionId", "space.agent_session_id"],
+  ["actionId", "space.action_id"],
+  ["goalId", "space.goal_id"],
+  ["dotId", "space.dot_id"],
+  ["turnId", "space.turn_id"],
+  ["cliTaskId", "space.cli_task_id"],
+  ["revisionId", "space.revision_id"]
+];
 
 export async function observeActivityExecution<T>(
   info: ActivityInfo,
@@ -158,6 +231,9 @@ export async function observeActivityExecution<T>(
   const queueMs = Number.isFinite(info.currentAttemptScheduledTimestampMs)
     ? Math.max(0, startedAt - info.currentAttemptScheduledTimestampMs)
     : null;
+  const correlation = activityCorrelation(args);
+  const parent = activityTraceparent(args, dependencies.headers);
+  const attemptSpanId = randomSpanId();
   const base: Record<string, WorkerLogValue> = {
     activityType,
     activityId: info.activityId,
@@ -165,14 +241,17 @@ export async function observeActivityExecution<T>(
     workflowId: info.workflowExecution?.workflowId ?? null,
     temporalRunId: info.workflowExecution?.runId ?? null,
     attempt: info.attempt,
-    ...activityCorrelation(args)
+    ...correlation
   };
   const labels = { activity_type: activityType };
   if (info.attempt > 1) metrics.activityRetries.inc(labels);
   if (queueMs !== null) metrics.activityScheduleToStart.observe(labels, queueMs / 1000);
   metrics.activitiesInFlight.inc(labels);
   workerLog("info", "activity.started", { ...base, queueMs });
-  const observation: ActivityObservation = { reasonCode: null };
+  const observation: ActivityObservation = {
+    reasonCode: null,
+    activeTraceparent: parent ? { traceId: parent.traceId, parentId: attemptSpanId, flags: parent.flags } : null
+  };
 
   const finish = (outcome: ActivityOutcome, reasonCode: string | null, errorName: string | null) => {
     const durationMs = Math.max(0, now() - startedAt);
@@ -194,16 +273,90 @@ export async function observeActivityExecution<T>(
       queueMs,
       rssBytes: process.memoryUsage().rss
     });
-    const parent = dependencies.spans ? activityTraceparent(args) : null;
-    if (parent) {
-      dependencies.spans!.record({
+    if (dependencies.spans && parent) {
+      const attributes: Record<string, string | number> = {
+        "space.activity_type": activityType,
+        "space.outcome": outcome,
+        "space.attempt": info.attempt,
+        "space.duration_ms": durationMs
+      };
+      if (queueMs !== null) attributes["space.queue_ms"] = queueMs;
+      const activityId = logIdentifier(info.activityId);
+      if (activityId) attributes["space.activity_id"] = activityId;
+      const workflowType = logIdentifier(info.workflowType);
+      if (workflowType) attributes["space.workflow_type"] = workflowType;
+      const workflowId = logIdentifier(info.workflowExecution?.workflowId);
+      if (workflowId) attributes["space.workflow_id"] = workflowId;
+      const runId = logIdentifier(info.workflowExecution?.runId);
+      if (runId) attributes["space.run_id"] = runId;
+      if (reasonCode && logIdentifier(reasonCode)) attributes["space.error_code"] = reasonCode;
+      if (category && logIdentifier(category)) attributes["space.failure_category"] = category;
+
+      const mergedCorrelation: Record<string, string> = { ...correlation };
+      const headerTraceId = logIdentifier(readHeaderString(dependencies.headers, SPACE_TRACE_ID_HEADER));
+      if (!mergedCorrelation.traceId && headerTraceId) mergedCorrelation.traceId = headerTraceId;
+      const headerParentTraceId = logIdentifier(readHeaderString(dependencies.headers, SPACE_PARENT_TRACE_ID_HEADER));
+      if (!mergedCorrelation.parentTraceId && headerParentTraceId) mergedCorrelation.parentTraceId = headerParentTraceId;
+      const headerGoalId = logIdentifier(readHeaderString(dependencies.headers, SPACE_GOAL_ID_HEADER));
+      if (!mergedCorrelation.goalId && headerGoalId) mergedCorrelation.goalId = headerGoalId;
+      const headerMissionId = logIdentifier(readHeaderString(dependencies.headers, SPACE_MISSION_ID_HEADER));
+      if (!mergedCorrelation.missionId && headerMissionId) mergedCorrelation.missionId = headerMissionId;
+      const headerRoomId = logIdentifier(readHeaderString(dependencies.headers, SPACE_ROOM_ID_HEADER));
+      if (!mergedCorrelation.roomId && headerRoomId) mergedCorrelation.roomId = headerRoomId;
+      const headerPaneId = logIdentifier(readHeaderString(dependencies.headers, SPACE_PANE_ID_HEADER));
+      if (!mergedCorrelation.paneId && headerPaneId) mergedCorrelation.paneId = headerPaneId;
+
+      for (const [sourceKey, attrKey] of spanCorrelationAttributeMap) {
+        const val = logIdentifier(mergedCorrelation[sourceKey]);
+        if (val) attributes[attrKey] = val;
+      }
+
+      const foundExtra: Partial<Record<CorrelationKey, string>> = {};
+      let continuationSourceRunId: string | null = logIdentifier(
+        readHeaderString(dependencies.headers, SPACE_CONTINUATION_OF_RUN_ID_HEADER)
+      );
+      for (const arg of args) {
+        readCorrelation(arg, foundExtra, 2);
+        if (!continuationSourceRunId) continuationSourceRunId = readContinuationSourceRunId(arg, 2);
+      }
+      if (foundExtra.changeSetId) attributes["space.change_set_id"] = foundExtra.changeSetId;
+      if (continuationSourceRunId) attributes["space.continuation_of_run_id"] = continuationSourceRunId;
+
+      const links: SpanLink[] = [];
+      const linkTp = parseTraceparent(readHeaderString(dependencies.headers, SPACE_LINK_TRACEPARENT_HEADER));
+      const linkKind = readHeaderString(dependencies.headers, SPACE_LINK_KIND_HEADER);
+      if (linkTp && (linkKind === "continue_as_new" || linkKind === "background_continuation")) {
+        links.push({
+          traceId: linkTp.traceId,
+          spanId: linkTp.parentId,
+          attributes: {
+            "space.link_kind": linkKind,
+            ...(continuationSourceRunId ? { "space.continuation_of_run_id": continuationSourceRunId } : {})
+          }
+        });
+      } else if (continuationSourceRunId && foundExtra.traceparent) {
+        const argTp = parseTraceparent(foundExtra.traceparent);
+        if (argTp) {
+          links.push({
+            traceId: argTp.traceId,
+            spanId: argTp.parentId,
+            attributes: {
+              "space.link_kind": "background_continuation",
+              "space.continuation_of_run_id": continuationSourceRunId
+            }
+          });
+        }
+      }
+
+      dependencies.spans.record({
         traceId: parent.traceId,
-        spanId: randomBytes(8).toString("hex"),
+        spanId: attemptSpanId,
         parentSpanId: parent.parentId,
         name: `activity ${activityType}`,
         startTimeUnixNano: BigInt(startedAt) * 1_000_000n,
         endTimeUnixNano: BigInt(startedAt + durationMs) * 1_000_000n,
-        attributes: { "space.activity_type": activityType, "space.outcome": outcome, "space.attempt": info.attempt },
+        attributes,
+        ...(links.length ? { links } : {}),
         error: outcome === "FAILED" || outcome === "FAILED_RESULT",
         kind: 1
       });
@@ -224,13 +377,15 @@ export async function observeActivityExecution<T>(
 }
 
 /** Temporal worker interceptor factory: register in Worker.create({ interceptors }). */
-export function createActivityObservabilityInterceptors(dependencies: Omit<ObserveActivityDependencies, "cancelled"> = {}): ActivityInterceptorsFactory {
+export function createActivityObservabilityInterceptors(dependencies: Omit<ObserveActivityDependencies, "cancelled" | "headers"> = {}): ActivityInterceptorsFactory {
   return (context) => ({
     inbound: {
       execute: (input, next) => observeActivityExecution(context.info, input.args, () => next(input), {
         ...dependencies,
+        headers: input.headers,
         cancelled: () => context.cancellationSignal.aborted
       })
     }
   });
 }
+
