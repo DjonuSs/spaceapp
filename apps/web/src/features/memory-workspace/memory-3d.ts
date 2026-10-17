@@ -8,7 +8,12 @@ export const DEFAULT_MEMORY_CAMERA: MemoryCamera3D = { yaw: 0.3, pitch: -0.15, z
 export const MAX_MEMORY_3D_LABELS = 64;
 export const MAX_MEMORY_3D_FALLBACK_NODES = 2000;
 
-// Avalanche each seed so the three axes are independent even for similar file IDs.
+/**
+ * Generates an independent, pseudo-random float in [0, 1) using bit-avalanching for 3D coordinate distribution.
+ *
+ * @param seed String identifier.
+ * @returns Floating point fraction between 0 (inclusive) and 1 (exclusive).
+ */
 const unit = (seed: string) => {
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i++) {
@@ -130,13 +135,24 @@ export function createMemoryNetwork3DSimulation(
   const cellCoordX = isLarge ? new Int16Array(count) : null;
   const cellCoordY = isLarge ? new Int16Array(count) : null;
   const cellCoordZ = isLarge ? new Int16Array(count) : null;
+  /**
+   * Spatial hash function mapping integer 3D grid coordinates to flat hash table buckets.
+   */
   const hashCell = (gx: number, gy: number, gz: number) =>
     ((Math.imul(gx, 73856093) ^ Math.imul(gy, 19349663) ^ Math.imul(gz, 83492791)) >>> 0) & tableMask;
 
-  // Exact integer key for <= 2,000 nodes (preserves bit-identical order with string key).
+  /**
+   * Packs 3D integer coordinates into a unique 32-bit integer key for graphs <= 2,000 nodes.
+   */
   const exactGridKey = (x: number, y: number, z: number) =>
     (x + 2048) * 16777216 + (y + 2048) * 4096 + (z + 2048);
 
+  /**
+   * Advances the 3D physics layout simulation by the specified number of batch steps.
+   *
+   * @param iterations Number of iterations to execute in this batch.
+   * @returns True if simulation reached totalSteps, false if additional iterations remain.
+   */
   const runSteps = (iterations = totalSteps - currentStep): boolean => {
     const targetStep = Math.min(totalSteps, currentStep + Math.max(0, iterations));
     for (; currentStep < targetStep; currentStep++) {
@@ -251,6 +267,12 @@ export function createMemoryNetwork3DSimulation(
       return currentStep;
     },
     step: runSteps,
+    /**
+     * Packs node 3D positions in original input order into a contiguous Float32Array (x, y, z triplets).
+     *
+     * @param target Optional pre-allocated Float32Array of length count * 3.
+     * @returns Contiguous packed coordinates buffer.
+     */
     packCoordinates(target?: Float32Array): Float32Array {
       const out = target && target.length === count * 3 ? target : new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
@@ -262,6 +284,11 @@ export function createMemoryNetwork3DSimulation(
       }
       return out;
     },
+    /**
+     * Converts current simulation points to a Map of node ID to 3D point coordinates.
+     *
+     * @returns Map of node ID to MemoryPoint3D.
+     */
     toMap(): Map<string, MemoryPoint3D> {
       const result = new Map<string, MemoryPoint3D>();
       for (let i = 0; i < count; i++) {
@@ -453,6 +480,19 @@ export function buildMemory3DSpatialIndex(input: {
   const cellHead = existing && existing.cellHead.length >= totalCells ? existing.cellHead : new Int32Array(totalCells);
   const nextInCell = existing && existing.nextInCell.length === count ? existing.nextInCell : new Int32Array(count);
 
+  if (existing) {
+    existing.screenX = screenX;
+    existing.screenY = screenY;
+    existing.depthZ = depthZ;
+    existing.perspective = perspective;
+    existing.radii = radii;
+    existing.visible = visible;
+    existing.isCoreSource = isCoreSource;
+    existing.isSource = isSource;
+    existing.cellHead = cellHead;
+    existing.nextInCell = nextInCell;
+  }
+
   cellHead.fill(-1, 0, totalCells);
   nextInCell.fill(-1);
 
@@ -624,6 +664,9 @@ export function selectMemory3DLabels(input: {
     }
   }
 
+  /**
+   * Sorts candidate node indices by label rendering priority: focused node > core source > general source > depth proximity.
+   */
   const comparePriority = (a: number, b: number) => {
     const nodeA = nodes[a]!, nodeB = nodes[b]!;
     const focusDiff = Number(nodeB.id === focusId) - Number(nodeA.id === focusId);
