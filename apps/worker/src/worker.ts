@@ -7,7 +7,7 @@ import { TelegramDeliveryWorker, TelegramSecretStore, otlpSpanExporterFromEnv } 
 import { NativeConnection, Runtime, Worker } from "@temporalio/worker";
 import * as activities from "./activities.js";
 import { createActivityObservabilityInterceptors } from "./activity-observability.js";
-import { createWorkflowObservabilitySinks, workflowObservabilityInterceptorModule } from "./workflow-observability.js";
+import { createWorkflowObservabilitySinks, workflowObservabilityInterceptorsPath } from "./workflow-observability.js";
 import { resolveTemporalCoreMetricsBind, resolveWorkerMetricsListen, startWorkerMetricsServer } from "./worker-metrics.js";
 import { workerLog } from "./worker-log.js";
 import { sweepCodexCliCompletions } from "./codex-cli-completion.js";
@@ -44,8 +44,8 @@ const worker = await Worker.create({
   workflowsPath,
   activities,
   interceptors: {
-    activity: [createActivityObservabilityInterceptors({ spans })],
-    workflowModules: [workflowObservabilityInterceptorModule]
+    workflowModules: [workflowObservabilityInterceptorsPath],
+    activity: [createActivityObservabilityInterceptors({ spans })]
   },
   sinks: createWorkflowObservabilitySinks({ spans })
 });

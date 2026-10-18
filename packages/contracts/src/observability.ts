@@ -153,6 +153,13 @@ export function deterministicTraceId(seed: string): string {
 }
 
 /**
+ * Pure, deterministic W3C traceparent derived from a stable trace seed and span seed.
+ */
+export function deterministicTraceparent(traceSeed: string, spanSeed = traceSeed, flags = "01"): string {
+  return formatTraceparent(deterministicTraceId(traceSeed), deterministicSpanId(spanSeed), flags);
+}
+
+/**
  * Admin trace lookup (GET /api/admin/traces/:traceId). Identifiers, codes,
  * statuses and timestamps only: event messages, payload metadata, prompts and
  * audit metadata are deliberately not part of this contract.

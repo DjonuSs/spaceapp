@@ -9,7 +9,7 @@ import {
 import { DEFAULT_TEMPORAL_ADDRESS, DEFAULT_TEMPORAL_NAMESPACE } from "./constants.js";
 import { otlpSpanExporterFromEnv } from "@space/runtime";
 import { createActivityObservabilityInterceptors } from "./activity-observability.js";
-import { createWorkflowObservabilitySinks, workflowObservabilityInterceptorModule } from "./workflow-observability.js";
+import { createWorkflowObservabilitySinks, workflowObservabilityInterceptorsPath } from "./workflow-observability.js";
 
 const service = "space-memory-maintenance-worker";
 
@@ -31,8 +31,8 @@ if (!memoryMaintenanceEnabled(process.env)) {
       activities,
       ...memoryMaintenanceWorkerOptions,
       interceptors: {
-        activity: [createActivityObservabilityInterceptors({ spans })],
-        workflowModules: [workflowObservabilityInterceptorModule]
+        workflowModules: [workflowObservabilityInterceptorsPath],
+        activity: [createActivityObservabilityInterceptors({ spans })]
       },
       sinks: createWorkflowObservabilitySinks({ spans })
     });

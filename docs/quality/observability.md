@@ -272,7 +272,8 @@ Tests that prove these properties:
 | --- | --- |
 | `packages/runtime/tests/metrics-registry.test.ts` | Unsafe label values never appear |
 | `apps/api/tests/observability-metrics.test.ts` | Secrets, prompts, paths and user IDs sent in URLs, headers and bodies never reach `/metrics` |
-| `apps/worker/tests/activity-observability.test.ts` | Prompts and thrown messages never reach worker logs or metrics |
+| `apps/worker/tests/activity-observability.test.ts` | Prompts and thrown messages never reach worker logs, metrics or OTLP spans |
+| `apps/worker/tests/otlp-trace-continuity.test.ts` | End-to-end OTLP trace tree (`API -> workflow -> child workflow -> activity`), retries/failures, `continueAsNew` and `trace:bg-<id>` span links, replay determinism (`callDuringReplay: false`), and allowlist redaction |
 | `apps/api/tests/trace-correlation.test.ts` | The trace lookup omits messages and metadata |
 | `apps/api/tests/observability-fault-injection.test.ts` | Checks all of the above end to end |
 
@@ -282,15 +283,17 @@ No credential or transcript export was added.
 
 | File | Covers |
 | --- | --- |
-| `packages/contracts/tests/observability.test.ts` | Categories, `traceparent` parsing, additive contract fields |
+| `packages/contracts/tests/observability.test.ts` | Categories, `traceparent` parsing, deterministic W3C trace/span IDs, additive contract fields |
 | `packages/runtime/tests/metrics-registry.test.ts` | Registry format, label safety, series cap, process metrics |
 | `packages/db/tests/trace-records.test.ts` | Bounded, parameterized PostgreSQL trace lookup |
 | `packages/db/tests/room-agent-trace-postgres.test.ts` | Migration 0206 on a disposable PostgreSQL: mission trace and first error code, a continuation found from its source run |
+| `apps/api/tests/otlp-span-exporter.test.ts` | OTLP/HTTP JSON span export, span links, attribute allowlist sanitization, and parent span continuity |
 | `apps/api/tests/trace-correlation.test.ts` | W3C context, log bindings, starter memo and input, Room Agent propagation, start-failure category, lookup projection |
 | `apps/api/tests/observability-metrics.test.ts` | New API metrics, `/metrics` access rule, redaction, CLI disconnect and reconnect counters |
 | `apps/api/src/__tests__/files-search-errors.test.ts` | `EMPTY_RESULT`/`OK` and each failure code |
 | `apps/api/tests/files-search-routes.test.ts` | The HTTP error envelope |
-| `apps/worker/tests/activity-observability.test.ts` | Interceptor records, outcomes, categories, metrics, loopback endpoint |
+| `apps/worker/tests/activity-observability.test.ts` | Interceptor records, outcomes, categories, metrics, loopback endpoint, workflow header parent continuity |
+| `apps/worker/tests/otlp-trace-continuity.test.ts` | End-to-end OTLP trace hierarchy across API, workflows, child workflows, and activities, `continueAsNew` & `trace:bg-<id>` links, Temporal workflow bundle determinism |
 | `apps/api/tests/observability-fault-injection.test.ts` | Four injected executor faults and one Temporal start failure, end to end |
 
 ## Not covered
@@ -310,12 +313,13 @@ No credential or transcript export was added.
   open: other mission failures (the supervisor workflow) record text, not a
   code, so they have no `error_code`.
 - **Background continuations keep their own trace (followed since
-  2026-10-16).** A continuation still runs as `trace:bg-<uuid>`, because the
-  turn's workflow ID embeds its trace ID. The trace lookup now follows each
+  2026-10-16, OTLP-linked since 2026-10-17).** A continuation runs as `trace:bg-<uuid>`, because the
+  turn's workflow ID embeds its trace ID. The trace lookup follows each
   continuation from the run it continues (`roomAgentContinuation.sourceRunId`,
   indexed by migration 0206, at most 50 generations and the row limit) and
-  marks it with `continuationOf`. Its events and logs remain under its own
-  trace ID. Chat-pane sends from room actions use `<actionId>:chat`.
+  marks it with `continuationOf`. In OTLP trace export, each background continuation
+  gets its own bounded W3C trace and links back to the source turn's span via
+  an OTLP span link (`space.link_type = "background_continuation"`). Chat-pane sends from room actions use `<actionId>:chat`.
 - **CLI terminal task IDs are not linked.** `cliTaskId` and `revisionId` are not
   tied to request IDs.
 - **Hosts are observed from the API, not instrumented.** Since 2026-10-12 the
@@ -336,9 +340,10 @@ No credential or transcript export was added.
   the lookup also returns the Space-native agent runs (`space_agent_runs`) of the
   trace's workflows, joined by workflow id, with their status and error code, and
   names a failed run's code as the cause when no event carries one.
-- **Hosts emit no spans.** Since 2026-10-16 the OTLP exporter sends API SERVER
-  spans and worker activity spans (the worker and both memory workers); the CLI
-  and Browser Hosts still join traces through log lines only.
+- **Hosts emit no spans.** The OTLP exporter sends API SERVER spans, workflow
+  and child-workflow spans, and worker activity-attempt spans across `space-worker`
+  and both memory workers; the CLI and Browser Hosts still join traces through
+  log lines only.
 - **Recovery counters are partial.** Recovery counters exist for plan model
   retries, CLI terminal reconnects and worker activity retries only.
 - **Worker endpoints are not scraped yet.** Stable's `deploy/space-worker.service`
