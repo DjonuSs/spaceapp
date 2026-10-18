@@ -114,7 +114,8 @@ const CONFIG_KEYS = new Set([
   "workspaces",
   "companionsEnabled",
   "optionalModules",
-  "installId"
+  "installId",
+  "engine"
 ]);
 
 // Optional SpaceApp modules (games, copilots, channels, ...): "all", "none" or a comma list.
@@ -284,18 +285,30 @@ export function installResourceChecks(resources, profile = "small", { requiredDi
   ];
 }
 
+/**
+ * Creates the default configuration object for SpaceApp.
+ *
+ * @param {object} options Configuration options.
+ * @param {string} options.version SpaceApp semantic version.
+ * @param {string} [options.profile="light"] Selected installation profile.
+ * @param {string} [options.accessMode="isolated"] Selected access mode ("isolated" or "host-root").
+ * @param {boolean} [options.companionsEnabled=false] Whether companion integrations are enabled.
+ * @param {string} [options.engine] Container engine ("docker" or "podman").
+ * @returns {object} Default configuration object.
+ */
 export function createDefaultConfig({
   version,
   profile = "light",
   accessMode = "isolated",
-  companionsEnabled = false
+  companionsEnabled = false,
+  engine
 }) {
   assertVersion(version);
   if (!INSTALL_PROFILES.includes(profile)) {
     throw new Error("Default config requires a resolved installation profile.");
   }
   const resolvedAccessMode = resolveInstallAccessMode(accessMode);
-  return {
+  const config = {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     version,
     previousVersion: null,
@@ -308,8 +321,21 @@ export function createDefaultConfig({
     optionalModules: "none",
     workspaces: []
   };
+  if (engine !== undefined) {
+    if (engine !== "docker" && engine !== "podman") {
+      throw new Error('engine must be "docker" or "podman".');
+    }
+    config.engine = engine;
+  }
+  return config;
 }
 
+/**
+ * Validates a SpaceApp configuration object against supported fields and schema constraints.
+ *
+ * @param {object} config Configuration object to validate.
+ * @returns {object} The validated configuration object.
+ */
 export function validateConfig(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error("SpaceApp config must be an object.");
@@ -346,6 +372,12 @@ export function validateConfig(config) {
   }
   if (typeof config.companionsEnabled !== "boolean") {
     throw new Error("companionsEnabled must be boolean.");
+  }
+  if (config.engine !== undefined && config.engine !== "docker" && config.engine !== "podman") {
+    throw new Error('engine must be "docker" or "podman".');
+  }
+  if (config.engine === "podman" && config.accessMode === "host-root") {
+    throw new Error("Host-root access is not supported on Podman.");
   }
   if (config.optionalModules !== undefined && !OPTIONAL_MODULES_PATTERN.test(config.optionalModules)) {
     throw new Error("optionalModules must be all, none or a comma-separated list of module names.");
@@ -575,13 +607,25 @@ export function renderRuntimeEnv(config) {
   ].join("\n");
 }
 
+/**
+ * Renders the compose override YAML file for external workspace bind mounts.
+ * Applies the SELinux "z" shared label when running on Podman.
+ *
+ * @param {object} config SpaceApp configuration object.
+ * @returns {string} Compose YAML defining workspace bind mounts.
+ */
 export function renderWorkspaceCompose(config) {
   validateConfig(config);
+  const isPodman = config.engine === "podman";
   const mounts = config.workspaces.flatMap((workspace) => [
     "      - type: bind",
     `        source: ${JSON.stringify(workspace.hostPath)}`,
     `        target: ${JSON.stringify(workspace.containerPath)}`,
-    `        read_only: ${workspace.readOnly}`
+    `        read_only: ${workspace.readOnly}`,
+    ...(isPodman ? [
+      "        bind:",
+      "          selinux: z"
+    ] : [])
   ]);
   const service = mounts.length > 0
     ? ["    volumes:", ...mounts]
@@ -625,12 +669,25 @@ export function renderHostAccessCompose(config) {
   ].join("\n");
 }
 
+/**
+ * Constructs the container engine compose execution specification.
+ * Supports Docker and Podman container engines.
+ *
+ * @param {string} action Compose action to execute (e.g., "up", "down", "logs").
+ * @param {string} root Installation root directory path.
+ * @param {object} [options={}] Command options including engine, profile, stateRoot.
+ * @returns {{ command: string, args: string[] }} Executable command specification.
+ */
 export function composeCommand(action, root, options = {}) {
   validateHome(root);
   const stateRoot = options.stateRoot ?? root;
   validateHome(stateRoot);
   const profile = options.profile ?? "standard";
   const settings = profileRuntimeSettings(profile);
+  const engine = options.engine ?? options.config?.engine ?? "docker";
+  if (engine !== "docker" && engine !== "podman") {
+    throw new Error('Engine must be "docker" or "podman".');
+  }
   const base = [
     "compose",
     "--project-name", composeProjectName(root),
@@ -731,7 +788,7 @@ export function composeCommand(action, root, options = {}) {
   if (!selected) {
     throw new Error(`Unsupported Compose action "${action}".`);
   }
-  return { command: "docker", args: [...base, ...selected] };
+  return { command: engine, args: [...base, ...selected] };
 }
 
 export function composeProjectName(root) {
@@ -764,11 +821,26 @@ export async function writeRuntimeFiles(root, config) {
   await atomicWrite(join(root, "compose.host-access.yml"), renderHostAccessCompose(config));
 }
 
+/**
+ * Prepares a SpaceApp installation in the specified root directory.
+ * Generates initial configurations, database passwords, session secrets, and tokens.
+ * Refuses switching container engines on an existing installation to protect persistent volumes.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} options Installation parameters.
+ * @param {string} options.version SpaceApp semantic version.
+ * @param {string} [options.profile] Installation profile or "auto".
+ * @param {string} [options.accessMode] Access mode ("isolated" or "host-root").
+ * @param {boolean} [options.companionsEnabled] Whether companions are enabled.
+ * @param {string} [options.engine] Container engine ("docker" or "podman").
+ * @returns {Promise<{ config: object, setupToken: string|null }>} Prepared configuration and setup token.
+ */
 export async function prepareInstallation(root, {
   version,
   profile,
   accessMode,
-  companionsEnabled
+  companionsEnabled,
+  engine
 }) {
   validateHome(root);
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -780,8 +852,10 @@ export async function prepareInstallation(root, {
     ? undefined
     : resolveInstallProfile(profile, profile === "auto" ? await inspectSystemResources(root) : totalmem());
   let config;
+  let existingConfig = null;
   try {
-    config = await loadConfig(root);
+    existingConfig = await loadConfig(root);
+    config = existingConfig;
   } catch (error) {
     if (error?.code !== "ENOENT") {
       throw error;
@@ -790,8 +864,17 @@ export async function prepareInstallation(root, {
       version,
       profile: resolvedProfile ?? "light",
       accessMode: resolveInstallAccessMode(accessMode),
-      companionsEnabled
+      companionsEnabled,
+      engine
     });
+  }
+  if (existingConfig) {
+    const existingEngine = existingConfig.engine ?? "docker";
+    if (engine !== undefined && engine !== existingEngine) {
+      throw new Error(
+        `Cannot switch container engine from "${existingEngine}" to "${engine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${engine}", and run "spaceapp restore".`
+      );
+    }
   }
   if (config.version !== version) {
     config = {
@@ -809,6 +892,9 @@ export async function prepareInstallation(root, {
   }
   if (companionsEnabled !== undefined && config.companionsEnabled !== companionsEnabled) {
     config = { ...config, companionsEnabled };
+  }
+  if (engine !== undefined && config.engine !== engine) {
+    config = { ...config, engine };
   }
   validateConfig(config);
 
@@ -866,6 +952,14 @@ export async function prepareInstallation(root, {
   return { config, setupToken };
 }
 
+/**
+ * Commits an installation by writing compose template, runtime configuration, and persisting config.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} config SpaceApp configuration object.
+ * @param {object} [options={}] Options including templateDir and persistConfig.
+ * @returns {Promise<void>}
+ */
 export async function commitInstallation(root, config, {
   templateDir = defaultTemplateDir(),
   persistConfig = true
@@ -879,6 +973,13 @@ export async function commitInstallation(root, config, {
   if (persistConfig) await saveConfig(root, config);
 }
 
+/**
+ * Initializes a SpaceApp installation in the specified root directory.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} options Installation parameters.
+ * @returns {Promise<{ config: object, setupToken: string|null }>} Initialized configuration and setup token.
+ */
 export async function initializeInstallation(root, options) {
   const result = await prepareInstallation(root, options);
   await commitInstallation(root, result.config, {
