@@ -654,6 +654,12 @@ async function dockerCliAndComposeAreAvailable(execute) {
   return true;
 }
 
+/**
+ * Checks if Docker CLI, compose plugin, and Docker daemon are ready.
+ *
+ * @param {Function} execute Command execution function.
+ * @returns {Promise<boolean>} True if Docker engine is operational.
+ */
 async function dockerIsReady(execute) {
   for (const spec of [
     { command: "docker", args: ["--version"] },
@@ -855,6 +861,19 @@ export async function ensurePodmanAvailable({
   return { code: 0, reexecuted: false };
 }
 
+/**
+ * Dispatches automated Docker Engine and Compose installation for supported Linux distributions.
+ *
+ * @param {object} params Linux installation parameters.
+ * @param {string} params.arch Architecture string ("amd64" | "arm64").
+ * @param {object} params.release Parsed /etc/os-release fields.
+ * @param {import("node:stream").Readable} params.stdin Standard input stream.
+ * @param {import("node:stream").Writable} params.stdout Standard output stream.
+ * @param {import("node:stream").Writable} params.stderr Standard error stream.
+ * @param {Function} params.execute Command execution runner.
+ * @param {Function} params.download Binary download runner.
+ * @returns {Promise<{ code: number, reexecuted: boolean }>} Installation result.
+ */
 async function installLinuxDockerEngine({
   arch,
   release,

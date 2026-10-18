@@ -74,7 +74,7 @@ npx --yes run-spaceapp@latest install --engine docker
 
 - **Auto-detection**: If `--engine` is omitted, the installer prefers Docker if working. If Docker is absent and Podman is ready on Linux, Podman is offered interactively (or auto-selected in `--non-interactive`).
 - **SELinux Relabeling**: Workspace bind mounts automatically append `bind: { selinux: "z" }` on Podman to allow container access under SELinux.
-- **cgroup v2 & Resource Limits**: `doctor` inspects cgroup version and controller delegation (`cpu`, `memory`). If resource limits cannot be applied due to missing rootless delegation, `doctor` reports clear guidance to enable user lingering (`loginctl enable-linger`) or delegate controllers in systemd.
+- **cgroup v2 & Resource Limits**: `doctor` inspects cgroup version and controller delegation (`cpu`, `memory`). If resource limits cannot be applied due to missing rootless delegation, `doctor` reports clear guidance to delegate controllers in systemd (`/etc/systemd/system/user@.service.d/delegate.conf` with `Delegate=cpu cpuset io memory pids` and `sudo systemctl daemon-reload`).
 - **macOS Podman Machine**: On macOS, `install --engine podman` checks the active Podman machine's CPU, memory, and disk capacity against the requested profile. If resources are insufficient, it provides the exact resize commands:
   ```bash
   podman machine stop

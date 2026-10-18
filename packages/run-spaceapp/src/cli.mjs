@@ -95,6 +95,12 @@ const trustedEnvironmentNames = new Set([
   "SPACEAPP_RESUME_SCRIPT_PATH"
 ]);
 
+/**
+ * Writes troubleshooting guidance to stderr if Docker credential helper fails on Windows.
+ *
+ * @param {string} platform Operating system platform name.
+ * @param {import("node:stream").Writable} stderr Standard error stream.
+ */
 export function writeWindowsCredentialHint(platform, stderr) {
   if (platform !== "win32") {
     return;
@@ -106,6 +112,14 @@ export function writeWindowsCredentialHint(platform, stderr) {
   );
 }
 
+/**
+ * Executes a Docker command within a temporary isolated config directory on Windows.
+ *
+ * @param {string} platform Operating system platform name.
+ * @param {object} spec Command specification object.
+ * @param {Function} run Execution callback runner.
+ * @returns {Promise<any>} Execution result.
+ */
 export async function withHeadlessDockerConfig(platform, spec, run) {
   if (platform !== "win32" || spec.command !== "docker") {
     return run(spec);
@@ -126,15 +140,36 @@ export async function withHeadlessDockerConfig(platform, spec, run) {
   }
 }
 
+/**
+ * Checks whether an automated non-interactive installation run was explicitly confirmed.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream with attached prompt controller.
+ * @returns {boolean} True if non-interactive mode with confirmation was requested.
+ */
 function approvedAutomation(stdin) {
   const controller = stdin?._spaceappPromptController;
   return controller?.nonInteractive === true && controller.answers.confirm === true;
 }
 
+/**
+ * Determines whether the standard input stream supports interactive terminal prompts.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @returns {boolean} True if interactive TTY and raw mode are available.
+ */
 function interactiveAvailable(stdin) {
   return Boolean(stdin?.isTTY && typeof stdin?.setRawMode === "function");
 }
 
+/**
+ * Prompts the user with a yes/no question and returns a boolean response.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {string} question Prompt question text.
+ * @param {object} [options={}] Options including defaultYes and answerKey.
+ * @returns {Promise<boolean>} True for yes, false for no.
+ */
 async function promptYesNo(stdin, stdout, question, { defaultYes = false, answerKey = null } = {}) {
   for (;;) {
     const answer = (await readSecret(stdin, stdout, `${question} [${defaultYes ? "Y/n" : "y/N"}] `, { mask: false, answerKey, defaultValue: defaultYes ? "y" : "n" })).trim().toLowerCase();
@@ -151,6 +186,16 @@ async function promptYesNo(stdin, stdout, question, { defaultYes = false, answer
   }
 }
 
+/**
+ * Prompts the user to select an option from a numbered list of choices.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {string} question Prompt question text.
+ * @param {Array<{ label: string, value: string }>} options Available selectable options.
+ * @param {object} [options={}] Options including defaultIndex and answerKey.
+ * @returns {Promise<string>} The selected option value.
+ */
 async function promptChoice(stdin, stdout, question, options, { defaultIndex = 0, answerKey = null } = {}) {
   stdout.write(`${question}\n`);
   options.forEach((option, index) => {
@@ -171,6 +216,14 @@ async function promptChoice(stdin, stdout, question, options, { defaultIndex = 0
   }
 }
 
+/**
+ * Displays the planned installation changes and requests final user confirmation.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {string[]} lines List of plan summary description lines.
+ * @returns {Promise<boolean>} True if confirmed, false if cancelled.
+ */
 async function finalConfirmation(stdin, stdout, lines) {
   stdout.write("SpaceApp setup plan:\n");
   for (const line of lines) {
@@ -183,6 +236,12 @@ async function finalConfirmation(stdin, stdout, lines) {
   return approved;
 }
 
+/**
+ * Reads and parses raw configuration JSON from the installation root directory.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {Promise<object|null>} Parsed raw config object or null if absent/invalid.
+ */
 async function readRawConfig(root) {
   let raw;
   try {
@@ -201,6 +260,14 @@ async function readRawConfig(root) {
 
 const RUNONCE_CONTINUATION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 
+/**
+ * Retrieves the current operating system username from environment or OS userInfo.
+ *
+ * @param {object} params Parameter object.
+ * @param {string} params.platform Operating system platform name.
+ * @param {object} params.env Environment variables map.
+ * @returns {string} Username string.
+ */
 function currentOsUsername({ platform, env }) {
   if (platform === "win32") {
     return env.USERNAME || env.USER || userInfo().username;
@@ -208,10 +275,25 @@ function currentOsUsername({ platform, env }) {
   return env.USER || userInfo().username;
 }
 
+/**
+ * Resolves the path to the Windows RunOnce continuation state file.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {string} File path string.
+ */
 function runOnceContinuationPath(root) {
   return join(root, "var", "runonce-continuation.json");
 }
 
+/**
+ * Reads and validates a Windows RunOnce continuation payload.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} params Validation parameters.
+ * @param {string} params.platform Operating system platform name.
+ * @param {string} params.runtimeVersion Expected target runtime version.
+ * @returns {Promise<object|null>} Validated continuation payload or null.
+ */
 async function readRunOnceContinuation(root, { platform, runtimeVersion }) {
   if (platform !== "win32") {
     return null;
@@ -247,10 +329,25 @@ async function readRunOnceContinuation(root, { platform, runtimeVersion }) {
   return payload;
 }
 
+/**
+ * Removes the Windows RunOnce continuation file after consumption.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {Promise<void>}
+ */
 async function consumeRunOnceContinuation(root) {
   await rm(runOnceContinuationPath(root), { force: true }).catch(() => {});
 }
 
+/**
+ * Writes an approved Windows RunOnce continuation state payload.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} params Payload parameters.
+ * @param {string} params.runtimeVersion Target runtime version.
+ * @param {object} params.actions Approved actions dictionary.
+ * @returns {Promise<void>}
+ */
 async function writeRunOnceContinuation(root, { runtimeVersion, actions }) {
   await mkdir(join(root, "var"), { recursive: true, mode: 0o700 });
   const createdAt = Date.now();
@@ -266,6 +363,13 @@ async function writeRunOnceContinuation(root, { runtimeVersion, actions }) {
   await writeFile(runOnceContinuationPath(root), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
 }
 
+/**
+ * Main command-line interface entry point for the SpaceApp launcher.
+ *
+ * @param {string[]} argv Command-line argument vector.
+ * @param {object} [options={}] Invocation environment, streams, and system runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 export async function run(argv, {
   env = process.env,
   platform = process.platform,
@@ -609,6 +713,13 @@ export async function run(argv, {
   throw new Error(`Unknown command "${command}". Run "${UNIVERSAL_COMMAND} help".`);
 }
 
+/**
+ * Executes the install command, guiding setup, provisioning container engine, and starting runtime.
+ *
+ * @param {string[]} args Command-line arguments passed to install.
+ * @param {object} options Options including root, versions, execution environment, streams, and system runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function installCommand(args, {
   root,
   launcherVersion,
@@ -1044,6 +1155,12 @@ async function installCommand(args, {
   }
 }
 
+/**
+ * Removes container services that are disabled in the target profile.
+ *
+ * @param {object} params Options including root, config, stateRoot, execute, and io streams.
+ * @returns {Promise<number>} Exit code from compose removal.
+ */
 async function removeInactiveProfileServices({root, config, stateRoot = root, execute, stdin, stdout, stderr}) {
   const settings = profileRuntimeSettings(config.profile);
   for (const [enabled, action, profile] of [
@@ -1060,6 +1177,12 @@ async function removeInactiveProfileServices({root, config, stateRoot = root, ex
   return 0;
 }
 
+/**
+ * Collects interactive setup options and system resource requirements to formulate an installation plan.
+ *
+ * @param {object} params Setup parameters including args, root, versions, platform, and runners.
+ * @returns {Promise<object>} Planned installation parameters and options.
+ */
 async function planInteractiveSetup({
   args,
   root,
@@ -1312,6 +1435,13 @@ async function planInteractiveSetup({
   };
 }
 
+/**
+ * Detects whether requested command-line options differ from the existing configuration.
+ *
+ * @param {object|null} rawExisting Existing configuration object.
+ * @param {object} parsed Parsed command-line install arguments.
+ * @returns {boolean} True if a configuration change is requested.
+ */
 function hasRequestedConfigChange(rawExisting, parsed) {
   if (!rawExisting) {
     return false;
@@ -1338,6 +1468,13 @@ function hasRequestedConfigChange(rawExisting, parsed) {
   return false;
 }
 
+/**
+ * Applies planned configuration repairs to an existing installation config file.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object|null} rawExisting Raw existing configuration object.
+ * @returns {Promise<object|null>} Repaired configuration object or null if no repairs needed.
+ */
 async function applyApprovedConfigRepairs(root, rawExisting) {
   if (!rawExisting) {
     return null;
@@ -1351,6 +1488,12 @@ async function applyApprovedConfigRepairs(root, rawExisting) {
   return repaired;
 }
 
+/**
+ * Probes the Docker CLI to detect if Docker is installed and executable.
+ *
+ * @param {object} params Parameter containing the execute function.
+ * @returns {Promise<number>} Exit code 0 if available, 127 or non-zero otherwise.
+ */
 async function detectDockerAvailable({ execute }) {
   try {
     return await execute({ command: "docker", args: ["--version"] }, { stdin: null, stdout: null, stderr: null });
@@ -1359,6 +1502,16 @@ async function detectDockerAvailable({ execute }) {
   }
 }
 
+/**
+ * Offers the user an option to store an unattended RunOnce continuation on Windows.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {string} runtimeVersion Target runtime version string.
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {object} actions Planned actions dictionary.
+ * @returns {Promise<void>}
+ */
 async function offerUnattendedContinuation(root, runtimeVersion, stdin, stdout, actions) {
   const answer = await promptYesNo(
     stdin,
@@ -1372,6 +1525,12 @@ async function offerUnattendedContinuation(root, runtimeVersion, stdin, stdout, 
   }
 }
 
+/**
+ * Repairs configuration, environment variables, compose templates, and runtime containers in place.
+ *
+ * @param {object} params Repair options including root, config, platform, streams, and runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function repairRuntime({ root, config, platform, stdin, stdout, stderr, execute, request, sleep, dryRun = false, ensureDocker = ensureDockerAvailable, env = process.env, arch = process.arch, inspectResources = inspectSystemResources }) {
   const raw = await readRawConfig(root);
   const plan = planConfigRepairs(raw);
@@ -1441,6 +1600,12 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
   return 0;
 }
 
+/**
+ * Upgrades SpaceApp to a new version, creating checkpoints, verifying storage, and rolling back on failure.
+ *
+ * @param {object} params Update parameters including root, config, targetVersion, platform, streams, and runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function performUpdate({
   root,
   config,
@@ -1519,10 +1684,22 @@ async function performUpdate({
 const CHECKPOINT_ID_PATTERN = /^spaceapp-checkpoint-\d{8}T\d{6}Z(?:-[a-f0-9]{8})?$/;
 const CHECKPOINT_KEEP_COUNT = 2;
 
+/**
+ * Generates a unique checkpoint identifier string based on timestamp and random bytes.
+ *
+ * @returns {string} Checkpoint identifier string.
+ */
 function checkpointId() {
   return `spaceapp-checkpoint-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${randomBytes(4).toString("hex")}`;
 }
 
+/**
+ * Generates a manifest file entry with size and SHA-256 hash for a specified path.
+ *
+ * @param {string} path Actual file system path.
+ * @param {string} logicalPath Relative logical path stored in the manifest.
+ * @returns {Promise<{ path: string, bytes: number, sha256: string }>} Manifest entry object.
+ */
 async function manifestEntry(path, logicalPath) {
   const content = await readFile(path);
   return {
@@ -1532,6 +1709,13 @@ async function manifestEntry(path, logicalPath) {
   };
 }
 
+/**
+ * Recursively copies a directory tree from source to destination.
+ *
+ * @param {string} source Source directory path.
+ * @param {string} destination Destination directory path.
+ * @returns {Promise<void>}
+ */
 async function cpDirectory(source, destination) {
   await mkdir(destination, { recursive: true, mode: 0o700 });
   for (const entry of await readdir(source, { withFileTypes: true })) {
@@ -1545,6 +1729,13 @@ async function cpDirectory(source, destination) {
   }
 }
 
+/**
+ * Recursively scans a directory and collects manifest entries for all contained files.
+ *
+ * @param {string} directory Filesystem directory path.
+ * @param {string} logicalDirectory Base logical path prefix for manifest entries.
+ * @returns {Promise<Array<{ path: string, bytes: number, sha256: string }>>} List of manifest entries.
+ */
 async function collectFiles(directory, logicalDirectory) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
@@ -1557,6 +1748,14 @@ async function collectFiles(directory, logicalDirectory) {
   return files;
 }
 
+/**
+ * Pauses container database writers and creates a full state checkpoint before upgrade.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} config SpaceApp configuration object.
+ * @param {object} io Execution context containing streams and execute runner.
+ * @returns {Promise<object>} Checkpoint descriptor object.
+ */
 async function createQuiescedCheckpoint(root, config, io) {
   io.stdout.write("Pausing SpaceApp writers before the database checkpoint...\n");
   try {
@@ -1573,6 +1772,14 @@ async function createQuiescedCheckpoint(root, config, io) {
   }
 }
 
+/**
+ * Creates a checkpoint snapshot of configuration files, secrets, and database dump.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} config SpaceApp configuration object.
+ * @param {object} io Options containing streams, execute runner, and platform.
+ * @returns {Promise<object>} Checkpoint descriptor object with id, path, and manifest.
+ */
 async function createCheckpoint(root, config, { stdin, stdout, stderr, execute, platform }) {
   const id = checkpointId();
   const path = join(root, "checkpoints", id);
@@ -1626,6 +1833,12 @@ async function createCheckpoint(root, config, { stdin, stdout, stderr, execute, 
   return { id, path, manifest };
 }
 
+/**
+ * Verifies that all files in a checkpoint exist on disk and match their manifest SHA-256 hashes.
+ *
+ * @param {object} checkpoint Checkpoint descriptor object.
+ * @returns {Promise<boolean>} True if all files match manifest, false otherwise.
+ */
 async function verifyCheckpoint(checkpoint) {
   for (const file of checkpoint.manifest.files ?? []) {
     const actual = await manifestEntry(join(checkpoint.path, file.path), file.path).catch(() => null);
@@ -1636,6 +1849,15 @@ async function verifyCheckpoint(checkpoint) {
   return true;
 }
 
+/**
+ * Retains failed upgrade state and writes recovery metadata to the checkpoint for manual diagnostics.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} checkpoint Checkpoint descriptor object.
+ * @param {object} attemptedConfig Attempted configuration object.
+ * @param {object} io IO streams and execute runner.
+ * @returns {Promise<void>}
+ */
 async function retainFailedUpgrade(root, checkpoint, attemptedConfig, io) {
   // A partially started runtime may already have accepted owner writes. Never
   // replace its database automatically with an older snapshot.
@@ -1651,6 +1873,12 @@ async function retainFailedUpgrade(root, checkpoint, attemptedConfig, io) {
   io.stderr.write(`Run "${UNIVERSAL_COMMAND} doctor --fix" to repair the attempted version. Restoring older data requires an explicit recovery decision.\n`);
 }
 
+/**
+ * Marks a checkpoint as verified after successful post-upgrade health checks and prunes older checkpoints.
+ *
+ * @param {object} checkpoint Checkpoint descriptor object.
+ * @returns {Promise<void>}
+ */
 async function markCheckpointVerified(checkpoint) {
   await writeFile(
     join(checkpoint.path, "verified.json"),
@@ -1660,6 +1888,12 @@ async function markCheckpointVerified(checkpoint) {
   await pruneCheckpoints(checkpoint.path);
 }
 
+/**
+ * Prunes verified checkpoints beyond the retention count limit.
+ *
+ * @param {string} currentPath Path of the current verified checkpoint.
+ * @returns {Promise<void>}
+ */
 async function pruneCheckpoints(currentPath) {
   const parent = join(currentPath, "..");
   const entries = (await readdir(parent, { withFileTypes: true }))
@@ -1675,6 +1909,15 @@ async function pruneCheckpoints(currentPath) {
   }
 }
 
+/**
+ * Requires interactive user confirmation or approved automation before applying destructive changes.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {import("node:stream").Writable} stderr Standard error stream.
+ * @param {string[]} lines Summary lines describing changes.
+ * @returns {Promise<boolean>} True if approved, false otherwise.
+ */
 async function requireChangeApproval(stdin, stdout, stderr, lines) {
   if (!interactiveAvailable(stdin) && !approvedAutomation(stdin)) {
     stderr.write("This change requires an interactive terminal (TTY). No changes were made.\n");
@@ -1683,6 +1926,12 @@ async function requireChangeApproval(stdin, stdout, stderr, lines) {
   return finalConfirmation(stdin, stdout, lines);
 }
 
+/**
+ * Collects and reports container status and recent logs to stderr before rollback.
+ *
+ * @param {object} options Diagnostic options including root, stateRoot, profile, platform, streams, execute, and engine.
+ * @returns {Promise<void>}
+ */
 async function reportInstallDiagnostics({
   root,
   stateRoot,
@@ -1722,6 +1971,12 @@ async function reportInstallDiagnostics({
   }
 }
 
+/**
+ * Restores previous container runtime configuration and containers after an installation failure.
+ *
+ * @param {object} options Restore options including root, existingConfig, streams, execute, engine, and platform.
+ * @returns {Promise<void>}
+ */
 async function restoreRuntimeAfterFailedInstall({
   root,
   stagedStateRoot,
@@ -1855,6 +2110,12 @@ function parseInstallArgs(args) {
   return { requestedProfile, requestedAccessMode, requestedEngine, noOpen, companionsEnabled };
 }
 
+/**
+ * Loads the existing SpaceApp configuration from the root directory or returns null if not installed.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {Promise<object|null>} Loaded configuration object or null if absent.
+ */
 async function loadExistingInstallation(root) {
   try {
     return await loadConfig(root);
@@ -1866,6 +2127,13 @@ async function loadExistingInstallation(root) {
   }
 }
 
+/**
+ * Manages external directory workspace bind mounts (add, remove, list).
+ *
+ * @param {string[]} args Command arguments.
+ * @param {object} params Options including root, config, and stdout stream.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function workspaceCommand(args, { root, config, stdout }) {
   const [action, identity, ...rest] = args;
   if (action === "add") {
@@ -1899,6 +2167,13 @@ async function workspaceCommand(args, { root, config, stdout }) {
   throw new Error(`Usage: ${UNIVERSAL_COMMAND} workspace <add|remove|list>`);
 }
 
+/**
+ * Manages external AI provider credentials and API keys stored in secrets.
+ *
+ * @param {string[]} args Command arguments (set, remove, list).
+ * @param {object} params Options including root, config, streams, and execute runner.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function credentialsCommand(args, { root, config, stdin, stdout, stderr, execute }) {
   const [action, provider, ...rest] = args;
   if (action === "list" && args.length === 1) {
@@ -1943,6 +2218,13 @@ async function credentialsCommand(args, { root, config, stdin, stdout, stderr, e
   throw new Error(`Usage: ${UNIVERSAL_COMMAND} credentials <set|remove|list>`);
 }
 
+/**
+ * Installs optional LLM provider binaries into the persistent provider volume.
+ *
+ * @param {string[]} args Command arguments including provider name.
+ * @param {object} params Options including root, config, streams, and execute runner.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function providerCommand(args, { root, config, stdin, stdout, stderr, execute }) {
   if (args.length !== 2 || args[0] !== "install") {
     throw new Error(`Usage: ${UNIVERSAL_COMMAND} provider install <provider>`);
@@ -1954,6 +2236,13 @@ async function providerCommand(args, { root, config, stdin, stdout, stderr, exec
   return execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, engine: config.engine }), { stdin, stdout, stderr });
 }
 
+/**
+ * Manages administrator setup tokens and passwords (reset-password, rotate-setup-token).
+ *
+ * @param {string[]} args Command arguments.
+ * @param {object} params Options including root, config, streams, and execute runner.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function ownerCommand(args, { root, config, stdin, stdout, stderr, execute }) {
   if (args.length === 1 && args[0] === "rotate-setup-token") {
     const token = randomBytes(32).toString("base64url");
@@ -1986,6 +2275,12 @@ async function ownerCommand(args, { root, config, stdin, stdout, stderr, execute
   });
 }
 
+/**
+ * Performs a clean reinstallation recreating compose templates and runtime while preserving data.
+ *
+ * @param {object} params Reinstall options including root, config, streams, and runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function reinstallCommand({
   root,
   config,
@@ -2041,7 +2336,25 @@ async function reinstallCommand({
 }
 
 /**
- * Generates an unredacted-safe diagnostic support bundle JSON for troubleshooting.
+ * Checks whether CPU and memory cgroup controllers are delegated to the user session.
+ *
+ * @param {string[]|string|null|undefined} controllers Cgroup controller names or comma/space-separated string.
+ * @param {string} platform Target platform OS name (e.g. "linux", "darwin").
+ * @returns {boolean} True if limits are delegated or running on a non-Linux platform.
+ */
+export function cgroupLimitsDelegated(controllers, platform) {
+  if (platform !== "linux") return true;
+  const list = Array.isArray(controllers)
+    ? controllers
+    : typeof controllers === "string"
+      ? controllers.split(/[,\s]+/)
+      : [];
+  const names = new Set(list.map((c) => String(c).trim().toLowerCase()));
+  return names.has("cpu") && names.has("memory");
+}
+
+/**
+ * Collects host, engine, configuration, and runtime health information into a sanitized diagnostic bundle.
  *
  * @param {object} params Parameter object.
  * @param {string} params.root Installation root directory.
@@ -2080,14 +2393,8 @@ async function supportBundleCommand({
         stderr: null
       });
       const parsed = JSON.parse(rawJson);
-      const controllers = Array.isArray(parsed?.host?.cgroupControllers)
-        ? parsed.host.cgroupControllers
-        : typeof parsed?.host?.cgroupControllers === "string"
-          ? parsed.host.cgroupControllers.split(/[,\s]+/)
-          : [];
-      const hasCpu = controllers.some((c) => String(c).toLowerCase().includes("cpu"));
-      const hasMemory = controllers.some((c) => String(c).toLowerCase().includes("memory"));
-      const limitsDelegated = platform !== "linux" || (hasCpu && hasMemory);
+      const controllers = parsed?.host?.cgroupControllers;
+      const limitsDelegated = cgroupLimitsDelegated(controllers, platform);
       engineFacts = {
         engine: "podman",
         version: parsed?.version?.Version ?? parsed?.Version?.Version ?? "unknown",
@@ -2177,6 +2484,12 @@ async function supportBundleCommand({
   return 0;
 }
 
+/**
+ * Performs a destructive factory reset, erasing containers, volumes, database, and configuration.
+ *
+ * @param {object} params Reset options including root, config, platform, streams, runners, and versions.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function factoryResetCommand({
   root,
   config,
@@ -2246,6 +2559,13 @@ async function factoryResetCommand({
   return 0;
 }
 
+/**
+ * Handles the update command to upgrade or downgrade the SpaceApp runtime image version.
+ *
+ * @param {string[]} args Command arguments containing optional target version.
+ * @param {object} options Options including root, config, version, streams, and runners.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function updateCommand(args, { root, config, version, platform, stdin, stdout, stderr, execute, request, sleep, inspectResources = inspectSystemResources, ensureDocker = ensureDockerAvailable, env = process.env, arch = process.arch }) {
   if (args.length > 1) {
     throw new Error(`Usage: ${UNIVERSAL_COMMAND} update [version]`);
@@ -2351,6 +2671,12 @@ async function updateCommand(args, { root, config, version, platform, stdin, std
   });
 }
 
+/**
+ * Verifies available disk space against calculated storage plans and prints diagnostic status.
+ *
+ * @param {object} params Options including root, config, existingConfig, operation, inspectResources, execute, and streams.
+ * @returns {Promise<number>} Process exit code (0 if sufficient storage, 1 otherwise).
+ */
 async function verifyStorage({ root, config, existingConfig, operation, inspectResources, execute, stdout, stderr }) {
   const resources = await inspectResources(root);
   const plan = await inspectStoragePlan({ root, config, existingConfig, operation, resources, execute });
@@ -2507,14 +2833,8 @@ async function doctor({
         detail: cgroupVersion
       });
 
-      const controllers = Array.isArray(podmanInfo?.host?.cgroupControllers)
-        ? podmanInfo.host.cgroupControllers
-        : typeof podmanInfo?.host?.cgroupControllers === "string"
-          ? podmanInfo.host.cgroupControllers.split(/[,\s]+/)
-          : [];
-      const hasCpu = controllers.some((c) => String(c).toLowerCase().includes("cpu"));
-      const hasMemory = controllers.some((c) => String(c).toLowerCase().includes("memory"));
-      const limitsDelegated = platform !== "linux" || (hasCpu && hasMemory);
+      const controllers = podmanInfo?.host?.cgroupControllers;
+      const limitsDelegated = cgroupLimitsDelegated(controllers, platform);
       checks.push({
         name: "Podman resource limit delegation",
         ok: limitsDelegated,
@@ -2586,6 +2906,18 @@ async function doctor({
   return checks.every((check) => check.ok) ? 0 : 1;
 }
 
+/**
+ * Polls the application readyz endpoint until it reports healthy or times out.
+ *
+ * @param {object} params Polling parameters.
+ * @param {string} params.url Application root URL.
+ * @param {Function} params.request Fetch-compatible request function.
+ * @param {Function} params.sleep Sleep function.
+ * @param {Function} [params.onProgress] Optional progress callback.
+ * @param {number} [params.maxAttempts] Maximum polling attempts.
+ * @param {number} [params.attemptTimeoutMs] Timeout per attempt in milliseconds.
+ * @returns {Promise<boolean>} True if ready, false if timed out.
+ */
 async function waitForApplicationReady({
   url,
   request,
@@ -2650,6 +2982,12 @@ async function waitForApplicationReady({
 
 const waitForReadiness = waitForApplicationReady;
 
+/**
+ * Queries the setup status endpoint to verify if initialization or claim is needed.
+ *
+ * @param {object} params Options including url and request function.
+ * @returns {Promise<object>} Status object with setupRequired and expiresAt.
+ */
 async function requestSetupStatus({ url, request }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SETUP_STATUS_TIMEOUT_MS);
@@ -2683,6 +3021,15 @@ async function requestSetupStatus({ url, request }) {
   }
 }
 
+/**
+ * Executes an engine command and writes helpful diagnostic guidance on missing CLI error (127).
+ *
+ * @param {Function} execute Command execution runner.
+ * @param {object} spec Command specification object.
+ * @param {object} io Stdio streams object.
+ * @param {object} options Options including platform, stderr stream, and optional engine name.
+ * @returns {Promise<number>} Process exit code.
+ */
 async function executeWithDockerDiagnostics(execute, spec, io, { platform, stderr }) {
   const code = await execute(spec, io);
   if (spec.command === "docker" && code === 127) {
@@ -2697,11 +3044,27 @@ async function executeWithDockerDiagnostics(execute, spec, io, { platform, stder
   return code;
 }
 
+/**
+ * Reads user input from stdin, optionally masking characters for password or token entry.
+ *
+ * @param {import("node:stream").Readable} stdin Standard input stream.
+ * @param {import("node:stream").Writable} stdout Standard output stream.
+ * @param {string} prompt Prompt question string.
+ * @param {object} [options={}] Options including mask, answerKey, and defaultValue.
+ * @returns {Promise<string>} Entered input string.
+ */
 export async function readSecret(stdin, stdout, prompt, { mask = true, answerKey = null, defaultValue = "" } = {}) {
   const controller = stdin?._spaceappPromptController || new PromptController({ stdin, stdout });
   return await controller.readLine(prompt, { mask, answerKey, defaultValue });
 }
 
+/**
+ * Executes a trusted command with streaming IO, arguments validation, and timeout handling.
+ *
+ * @param {object} spec Command specification with command, args, and optional env/timeoutMs.
+ * @param {object} [io={}] IO configuration including stdin, stdout, stderr, and optional input string.
+ * @returns {Promise<number>} Resolves with process exit code.
+ */
 export function executeCommand(spec, { stdin, stdout, stderr, input } = {}) {
   return new Promise((resolve, reject) => {
     if (!spec || typeof spec !== "object" || !trustedCommands.has(spec.command)) {
@@ -2757,6 +3120,13 @@ export function executeCommand(spec, { stdin, stdout, stderr, input } = {}) {
   });
 }
 
+/**
+ * Spawns an allowable system binary process with specified arguments and spawn options.
+ *
+ * @param {object} spec Command specification object.
+ * @param {object} options Child process spawn options.
+ * @returns {import("node:child_process").ChildProcess} Spawned child process.
+ */
 function spawnTrustedCommand(spec, options) {
   const args = spec.args;
   switch (spec.command) {
@@ -2778,6 +3148,12 @@ function spawnTrustedCommand(spec, options) {
   }
 }
 
+/**
+ * Validates environment variables to ensure only trusted names and string values are passed.
+ *
+ * @param {object} commandEnvironment Proposed command environment map.
+ * @returns {object} Merged environment object.
+ */
 function validateCommandEnvironment(commandEnvironment) {
   if (
     !commandEnvironment ||
@@ -2792,6 +3168,15 @@ function validateCommandEnvironment(commandEnvironment) {
   return { ...process.env, ...commandEnvironment };
 }
 
+/**
+ * Launches the web browser on the host platform pointing to the given URL.
+ *
+ * @param {string} url Web URL to open.
+ * @param {string} platform Operating system platform name.
+ * @param {Function} execute Command execution runner.
+ * @param {object} io Stdio streams.
+ * @returns {Promise<number>} Process exit code.
+ */
 function openBrowser(url, platform, execute, io) {
   if (platform === "darwin") {
     return execute({ command: "open", args: [url] }, io);
@@ -2806,12 +3191,25 @@ function openBrowser(url, platform, execute, io) {
   return execute({ command: "xdg-open", args: [url], background: true }, io);
 }
 
+/**
+ * Asserts that no extra positional arguments were passed to a command.
+ *
+ * @param {string[]} args Array of arguments.
+ * @param {string} command Command name.
+ */
 function assertNoArgs(args, command) {
   if (args.length > 0) {
     throw new Error(`Usage: ${UNIVERSAL_COMMAND} ${command}`);
   }
 }
 
+/**
+ * Determines whether a given command requires existing runtime configuration and compose files.
+ *
+ * @param {string} command Command name.
+ * @param {string[]} args Array of arguments.
+ * @returns {boolean} True if runtime files are required.
+ */
 function commandNeedsRuntimeFiles(command, args) {
   if ([
     "up",
@@ -2836,6 +3234,12 @@ function commandNeedsRuntimeFiles(command, args) {
   return false;
 }
 
+/**
+ * Returns Docker installation guidance text tailored to the host platform.
+ *
+ * @param {string} platform Operating system platform name.
+ * @returns {string} Guidance text string.
+ */
 function dockerInstallHelp(platform) {
   if (platform === "win32") {
     return `Run "${UNIVERSAL_COMMAND} install" to install and start signed Docker Desktop with WSL2 automatically.`;
@@ -2846,6 +3250,12 @@ function dockerInstallHelp(platform) {
   return `Run "${UNIVERSAL_COMMAND} install" to install and start Docker Engine and Compose automatically on supported Linux distributions.`;
 }
 
+/**
+ * Returns Docker troubleshooting guidance text when Docker is installed but unreachable.
+ *
+ * @param {string} platform Operating system platform name.
+ * @returns {string} Troubleshooting text string.
+ */
 function dockerEngineHelp(platform) {
   if (platform === "win32" || platform === "darwin") {
     return `Open Docker Desktop, complete any first-run prompt, then run "${UNIVERSAL_COMMAND} doctor" again.`;
@@ -2853,14 +3263,31 @@ function dockerEngineHelp(platform) {
   return `Start Docker Engine, verify the current user can access it, then run "${UNIVERSAL_COMMAND} doctor" again.`;
 }
 
+/**
+ * Formats a byte count into gibibytes rounded to one decimal place.
+ *
+ * @param {number} bytes Byte count.
+ * @returns {number} Value in GiB.
+ */
 function formatGibibytes(bytes) {
   return Math.floor((bytes / 1024 ** 3) * 10) / 10;
 }
 
+/**
+ * Pauses execution for a specified duration in milliseconds.
+ *
+ * @param {number} milliseconds Duration to wait.
+ * @returns {Promise<void>}
+ */
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+/**
+ * Returns the full multi-line help documentation string for the SpaceApp launcher CLI.
+ *
+ * @returns {string} Help text string.
+ */
 function helpText() {
   return `SpaceApp self-hosted launcher
 

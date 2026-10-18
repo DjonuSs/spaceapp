@@ -84,7 +84,8 @@ jobs:
         run: npm link -w run-spaceapp
 
       - name: Install SpaceApp with Podman engine
-        run: spaceapp install --engine podman --profile small --non-interactive --answers '{"confirm": true}'
+        run: |
+          spaceapp install --engine podman --profile small --non-interactive --answers '{"confirm": true}'
 
       - name: Verify readyz endpoint
         run: curl --fail --retry 30 --retry-connrefused --retry-delay 2 http://127.0.0.1:4911/readyz
@@ -93,4 +94,5 @@ jobs:
         run: spaceapp backup
 
       - name: Test spaceapp uninstall with purge-data
-        run: echo "DELETE" | spaceapp uninstall --purge-data
+        run: |
+          echo "DELETE" | spaceapp uninstall --purge-data

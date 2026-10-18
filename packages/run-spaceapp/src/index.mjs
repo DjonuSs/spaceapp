@@ -88,6 +88,12 @@ export const PROFILE_REQUIREMENTS = Object.freeze({
   standard: { cpuCount: 4, memoryBytes: 7 * 1024 ** 3, freshDiskBytes: 11 * 1024 ** 3 }
 });
 
+/**
+ * Resolves runtime settings (limits, services) for the specified profile name.
+ *
+ * @param {string} profile Profile name ("small", "medium", "large", "light", "standard").
+ * @returns {object} Profile runtime configuration settings.
+ */
 export function profileRuntimeSettings(profile) {
   const settings = PROFILE_RUNTIME_SETTINGS[profile];
   if (!settings) throw new Error("Install profile must be small, medium, large, light, or standard.");
@@ -251,6 +257,14 @@ export async function inspectSystemResources(root) {
   };
 }
 
+/**
+ * Evaluates host system resources against installation profile requirements.
+ *
+ * @param {object} resources Detected host resources with cpuCount, totalMemoryBytes, freeDiskBytes.
+ * @param {string} [profile="small"] Target profile name.
+ * @param {object} [options={}] Options including requiredDiskBytes and operation.
+ * @returns {Array<{ name: string, ok: boolean, detail: string }>} Resource check results.
+ */
 export function installResourceChecks(resources, profile = "small", { requiredDiskBytes, operation = "fresh" } = {}) {
   const cpuCount = Number(resources?.cpuCount);
   const totalMemoryBytes = Number(resources?.totalMemoryBytes);
@@ -579,6 +593,12 @@ export async function writeSetupToken(root, token) {
   return target;
 }
 
+/**
+ * Renders environment variables for container runtime configuration.
+ *
+ * @param {object} config SpaceApp configuration object.
+ * @returns {string} Formatted runtime.env file content.
+ */
 export function renderRuntimeEnv(config) {
   validateConfig(config);
   const settings = PROFILE_RUNTIME_SETTINGS[config.profile];
@@ -640,6 +660,12 @@ export function renderWorkspaceCompose(config) {
   ].join("\n");
 }
 
+/**
+ * Renders host root filesystem bind mount compose override YAML when host-root access mode is enabled.
+ *
+ * @param {object} config SpaceApp configuration object.
+ * @returns {string} Compose YAML content.
+ */
 export function renderHostAccessCompose(config) {
   validateConfig(config);
   if (config.accessMode === "isolated") {
@@ -791,11 +817,23 @@ export function composeCommand(action, root, options = {}) {
   return { command: engine, args: [...base, ...selected] };
 }
 
+/**
+ * Computes deterministic compose project name slug derived from the installation root directory path.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {string} Compose project name string.
+ */
 export function composeProjectName(root) {
   validateHome(root);
   return `spaceapp-${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 12)}`;
 }
 
+/**
+ * Selects the most recent portable backup identifier from the backups directory.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {Promise<string>} Latest backup identifier string.
+ */
 export async function selectLatestBackupId(root) {
   validateHome(root);
   const entries = await readdir(join(root, "backups"), { withFileTypes: true });
@@ -812,6 +850,13 @@ export async function selectLatestBackupId(root) {
   return backupId;
 }
 
+/**
+ * Writes runtime configuration files including runtime.env and compose override YAML files.
+ *
+ * @param {string} root Installation root directory path.
+ * @param {object} config SpaceApp configuration object.
+ * @returns {Promise<void>}
+ */
 export async function writeRuntimeFiles(root, config) {
   validateHome(root);
   validateConfig(config);

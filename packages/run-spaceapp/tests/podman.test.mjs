@@ -20,7 +20,8 @@ import {
   podmanIsReady,
   podmanInstallHelp
 } from "../src/prerequisites.mjs";
-import { run } from "../src/cli.mjs";
+import { run, cgroupLimitsDelegated } from "../src/cli.mjs";
+import { inspectStoragePlan } from "../src/storage.mjs";
 
 function capture() {
   let value = "";
@@ -438,3 +439,71 @@ test("lifecycle commands use podman executable when engine is podman", async () 
   assert.equal(calls.at(-1).command, "podman");
   assert.ok(calls.at(-1).args.includes("down"));
 });
+
+test("cgroupLimitsDelegated requires exact cpu and memory controller delegation on Linux", () => {
+  // Exact match matches both cpu and memory
+  assert.equal(cgroupLimitsDelegated(["cpu", "memory"], "linux"), true);
+  assert.equal(cgroupLimitsDelegated(["CPU", "MEMORY", "pids"], "linux"), true);
+  assert.equal(cgroupLimitsDelegated("cpu, memory, pids", "linux"), true);
+  assert.equal(cgroupLimitsDelegated("cpu io pids", "linux"), false);
+
+  // Substring "cpuset" must NOT satisfy "cpu"
+  assert.equal(cgroupLimitsDelegated(["cpuset", "memory"], "linux"), false);
+  assert.equal(cgroupLimitsDelegated("cpuset, memory", "linux"), false);
+
+  // Missing memory
+  assert.equal(cgroupLimitsDelegated(["cpu", "pids"], "linux"), false);
+
+  // Empty or null
+  assert.equal(cgroupLimitsDelegated([], "linux"), false);
+  assert.equal(cgroupLimitsDelegated(null, "linux"), false);
+  assert.equal(cgroupLimitsDelegated(undefined, "linux"), false);
+
+  // Non-linux platforms always pass
+  assert.equal(cgroupLimitsDelegated(null, "darwin"), true);
+  assert.equal(cgroupLimitsDelegated([], "win32"), true);
+});
+
+test("inspectStoragePlan recognizes Podman image IDs with or without sha256: prefix", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-storage-test-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+
+  const hexIdWithoutPrefix = "a".repeat(64);
+  const hexIdWithPrefix = `sha256:${"b".repeat(64)}`;
+
+  const execute = async (spec, io) => {
+    if (spec.args?.includes("info")) {
+      io?.stdout?.write?.(JSON.stringify({
+        store: { graphRoot: "/var/lib/containers/storage" },
+        host: { arch: "amd64", cpus: 4, memTotal: 8 * 1024 ** 3 }
+      }));
+      return 0;
+    }
+    if (spec.args?.includes("inspect")) {
+      // Return 64-char hex without prefix for one image, with prefix for another
+      io?.stdout?.write?.(spec.args.at(-1).includes("core") ? hexIdWithoutPrefix : hexIdWithPrefix);
+      return 0;
+    }
+    return 0;
+  };
+
+  const plan = await inspectStoragePlan({
+    root,
+    config,
+    existingConfig: config,
+    resources: { cpuCount: 4, totalMemoryBytes: 8 * 1024 ** 3, freeDiskBytes: 50 * 1024 ** 3 },
+    execute,
+    operation: "fresh"
+  });
+
+  assert.equal(plan.missingImages.length, 0);
+  assert.equal(plan.missingImageBytes, 0);
+  assert.equal(plan.resources.engineCpuCount, 4);
+  assert.equal(plan.resources.engineMemoryBytes, 8 * 1024 ** 3);
+});
+

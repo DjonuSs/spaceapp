@@ -8,6 +8,13 @@ const MiB = 1024 ** 2;
 // Upper bounds include extraction/transfer headroom, not the size of existing data.
 const imageReserve = { core: 1.4 * GiB, cli: 3.8 * GiB, browser: 2.2 * GiB, postgres: 700 * MiB, temporal: 800 * MiB };
 
+/**
+ * Captures probe command output from stdout with a 1MB limit.
+ *
+ * @param {Function} execute Command execution function.
+ * @param {object} spec Command specification object.
+ * @returns {Promise<string|null>} Captured stdout string or null on error.
+ */
 export async function captureProbe(execute, spec) {
   let output = "";
   const stdout = new Writable({ write(chunk, _encoding, done) {
@@ -20,6 +27,12 @@ export async function captureProbe(execute, spec) {
   } catch { return null; }
 }
 
+/**
+ * Calculates total size in bytes of existing SpaceApp configuration, secrets, and compose files.
+ *
+ * @param {string} root Installation root directory path.
+ * @returns {Promise<number>} Total size in bytes.
+ */
 async function configurationBytes(root) {
   let bytes = 0;
   // Checkpoints copy configuration and secrets; workspaces/volumes are retained in place.
@@ -37,6 +50,18 @@ async function configurationBytes(root) {
   return bytes;
 }
 
+/**
+ * Computes storage plan including required and checkpoint disk bytes for an operation.
+ *
+ * @param {object} options Calculation parameters.
+ * @param {string} options.operation Operation type ("fresh", "upgrade", etc.).
+ * @param {string} options.profile Resource profile name.
+ * @param {number} [options.missingImageBytes=0] Size of missing container images in bytes.
+ * @param {number} [options.databaseBytes=0] Size of database data in bytes.
+ * @param {number} [options.configBytes=0] Size of configuration files in bytes.
+ * @param {boolean} [options.databaseSizeKnown=true] Whether database size was successfully measured.
+ * @returns {object} Calculated storage plan object.
+ */
 export function calculateStoragePlan({ operation, profile, missingImageBytes = 0, databaseBytes = 0, configBytes = 0, databaseSizeKnown = true }) {
   const checkpointBytes = operation === "upgrade"
     ? Math.max(64 * MiB, databaseSizeKnown ? databaseBytes * 3 + configBytes : 512 * MiB + configBytes)
@@ -48,6 +73,14 @@ export function calculateStoragePlan({ operation, profile, missingImageBytes = 0
   };
 }
 
+/**
+ * Estimates missing layer byte size with extraction headroom for uncached image layers.
+ *
+ * @param {Array<{ size: number }>} layers Image layer descriptors from manifest.
+ * @param {string[]} diffIds Uncompressed layer diff IDs from image config.
+ * @param {Set<string>} cachedLayers Set of layer diff IDs already present locally.
+ * @returns {number} Estimated bytes required for missing layers.
+ */
 export function estimateMissingLayers(layers, diffIds, cachedLayers) {
   if (!Array.isArray(layers) || layers.length !== diffIds?.length) throw new Error("Invalid image layer metadata.");
   let bytes = 0;
@@ -59,6 +92,14 @@ export function estimateMissingLayers(layers, diffIds, cachedLayers) {
   return bytes;
 }
 
+/**
+ * Fetches registry image manifest and rootfs layer diff IDs from GHCR.
+ *
+ * @param {string} image Full container image reference name.
+ * @param {string} arch Target CPU architecture ("amd64" or "arm64").
+ * @param {Function} fetch HTTP fetch implementation function.
+ * @returns {Promise<{ layers: Array<{ size: number }>, diffIds: string[] }|null>}
+ */
 async function registryLayers(image, arch, fetch) {
   const match = /^ghcr\.io\/(oll4com\/spaceapp-(?:core|cli|browser)):([0-9]+\.[0-9]+\.[0-9]+)$/.exec(image);
   if (!match) return null;
@@ -124,12 +165,12 @@ export async function inspectStoragePlan({ root, config, existingConfig, resourc
   let sharedLayersEstimated = false;
   for (const [type, image] of images) {
     const cached = await captureProbe(execute, { command: engineCommand, args: ["image", "inspect", "--format", "{{.Id}}", image] });
-    if (!/^sha256:[a-f0-9]{64}$/.test(cached ?? "")) {
+    if (!/^(?:sha256:)?[a-f0-9]{64}$/.test(cached ?? "")) {
       missingImages.push(image);
       let reserve = imageReserve[type] ?? GiB;
       if (engine && existingConfig && cachedLayers.size && typeof fetch === "function") {
         try {
-          const metadata = await registryLayers(image, /arm|aarch64/.test(engine.Architecture ?? "") ? "arm64" : "amd64", fetch);
+          const metadata = await registryLayers(image, /arm|aarch64/.test(engine?.Architecture ?? engine?.host?.arch ?? "") ? "arm64" : "amd64", fetch);
           if (metadata) { reserve = estimateMissingLayers(metadata.layers, metadata.diffIds, cachedLayers); sharedLayersEstimated = true; }
         } catch { /* Offline/private registry: retain the full conservative reserve. */ }
       }
@@ -151,7 +192,7 @@ export async function inspectStoragePlan({ root, config, existingConfig, resourc
     if (/^\d+$/.test(free ?? "")) dockerFreeDiskBytes = Number(free);
   }
   // Linux can measure the engine storage directory directly even on a fresh install.
-  const rootDir = engine?.DockerRootDir || engine?.graphRoot || engine?.GraphRoot;
+  const rootDir = engine?.DockerRootDir || engine?.store?.graphRoot || engine?.graphRoot || engine?.GraphRoot;
   if (rootDir && process.platform === "linux") {
     const { inspectSystemResources } = await import("./index.mjs");
     try { dockerFreeDiskBytes = (await inspectSystemResources(rootDir)).freeDiskBytes; } catch {}
@@ -159,8 +200,8 @@ export async function inspectStoragePlan({ root, config, existingConfig, resourc
   return { ...plan, missingImages, sharedLayersEstimated, dockerFreeDiskBytes,
     resources: { ...resources,
       freeDiskBytes: dockerFreeDiskBytes === null ? resources.freeDiskBytes : Math.min(resources.freeDiskBytes, dockerFreeDiskBytes),
-      engineCpuCount: engine?.NCPU,
-      engineMemoryBytes: engine?.MemTotal
+      engineCpuCount: engine?.NCPU ?? engine?.host?.cpus,
+      engineMemoryBytes: engine?.MemTotal ?? engine?.host?.memTotal
     } };
 }
 
@@ -181,4 +222,10 @@ export function storageChecks(plan, resources) {
   return checks;
 }
 
+/**
+ * Formats a byte count into a human-readable string with two decimal places in gibibytes.
+ *
+ * @param {number} bytes Number of bytes.
+ * @returns {string} Formatted GiB string.
+ */
 function gib(bytes) { return (bytes / GiB).toFixed(2); }
