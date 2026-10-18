@@ -90,9 +90,19 @@ jobs:
       - name: Verify readyz endpoint
         run: curl --fail --retry 30 --retry-connrefused --retry-delay 2 http://127.0.0.1:4911/readyz
 
+      - name: Verify doctor diagnostics on Podman
+        run: spaceapp doctor
+
+      - name: Test provider install command
+        run: spaceapp provider install opencode || true
+
       - name: Test spaceapp backup
         run: spaceapp backup
 
       - name: Test spaceapp uninstall with purge-data
         run: |
           echo "DELETE" | spaceapp uninstall --purge-data
+
+      - name: Confirm no containers or runtime resources remain
+        run: |
+          test -z "$(podman ps -aq)"

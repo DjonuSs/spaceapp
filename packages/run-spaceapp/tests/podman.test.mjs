@@ -595,4 +595,87 @@ test("engine change supplied through answers.engine on existing install is rejec
   );
 });
 
+test("composeCommand generates correct profiles for small, medium, and large with podman", () => {
+  const root = "/tmp/spaceapp-profiles-test";
+
+  const smallSpec = composeCommand("up", root, { profile: "small", engine: "podman", companionsEnabled: false });
+  assert.equal(smallSpec.command, "podman");
+  assert.ok(!smallSpec.args.includes("workflows"), "small profile omits workflows");
+  assert.ok(!smallSpec.args.includes("standard"), "small profile omits browser");
+
+  const mediumSpec = composeCommand("up", root, { profile: "medium", engine: "podman", companionsEnabled: false });
+  assert.equal(mediumSpec.command, "podman");
+  assert.ok(mediumSpec.args.includes("workflows"), "medium profile includes workflows");
+  assert.ok(!mediumSpec.args.includes("standard"), "medium profile omits browser");
+
+  const largeSpec = composeCommand("up", root, { profile: "large", engine: "podman", companionsEnabled: false });
+  assert.equal(largeSpec.command, "podman");
+  assert.ok(largeSpec.args.includes("workflows"), "large profile includes workflows");
+  assert.ok(largeSpec.args.includes("standard"), "large profile includes standard browser");
+});
+
+test("renderWorkspaceCompose appends selinux z label for both read-write and read-only workspaces on podman", () => {
+  const hostDir = resolve(tmpdir(), "spaceapp-test-project");
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  config.workspaces = [
+    { id: "rw-ws-11223344", name: "rw", hostPath: hostDir, containerPath: "/workspaces/rw", readOnly: false },
+    { id: "ro-ws-55667788", name: "ro", hostPath: hostDir, containerPath: "/workspaces/ro", readOnly: true }
+  ];
+
+  const composeYaml = renderWorkspaceCompose(config);
+  assert.ok(composeYaml.includes("read_only: false"), "includes read-write workspace");
+  assert.ok(composeYaml.includes("read_only: true"), "includes read-only workspace");
+  const selinuxMatches = composeYaml.match(/selinux:\s*z/g);
+  assert.ok(selinuxMatches && selinuxMatches.length >= 4, "both workspaces receive selinux: z for core and cli services");
+});
+
+test("provider install opencode uses podman executable when engine is podman", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-provider-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const executedSpecs = [];
+  const execute = async (spec) => {
+    executedSpecs.push(spec);
+    return 0;
+  };
+
+  const code = await run(["provider", "install", "opencode"], {
+    env: { SPACEAPP_HOME: root },
+    execute,
+    stdout: { write: () => {} },
+    stderr: { write: () => {} }
+  });
+
+  assert.equal(code, 0);
+  const providerSpec = executedSpecs.find((s) => s.command === "podman" && s.args?.includes("exec"));
+  assert.ok(providerSpec, "podman compose exec was executed for provider install");
+  assert.ok(providerSpec.args.includes("opencode"), "passes opencode provider name");
+  assert.ok(providerSpec.args.includes("10001:10001"), "runs with non-root user 10001:10001");
+});
+
+test("recovery and restore commands use podman executable when engine is podman", () => {
+  const root = "/tmp/spaceapp-recovery-test";
+  const restoreSpec = composeCommand("restore", root, { backupId: "spaceapp-backup-20261018T120000000Z", profile: "small", engine: "podman" });
+  assert.equal(restoreSpec.command, "podman");
+
+  const stopSpec = composeCommand("stopForRestore", root, { profile: "small", engine: "podman" });
+  assert.equal(stopSpec.command, "podman");
+
+  const checkpointSpec = composeCommand("checkpointDump", root, { profile: "small", engine: "podman" });
+  assert.equal(checkpointSpec.command, "podman");
+});
+
+
+
 
