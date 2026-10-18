@@ -192,6 +192,9 @@ describe("production workflows in the Temporal time-skipping sandbox", () => {
     const entered = deferred();
     const release = deferred();
     let calls = 0;
+    /**
+     * Simulates sequential Dot goal execution steps with deferred release for signal verification.
+     */
     const dotGoalStep = async () => {
       if (++calls === 1) {
         entered.resolve();
@@ -229,6 +232,9 @@ describe("production workflows in the Temporal time-skipping sandbox", () => {
 
   it("retries transient Dot API failures using its five-second exponential backoff", async () => {
     const attempts: number[] = [];
+    /**
+     * Simulates transient Dot API step failures to verify exponential backoff retry behavior.
+     */
     const dotGoalStep = async () => {
       attempts.push(Context.current().info.attempt);
       if (attempts.length < 3) throw new Error("Temporary internal API failure");
@@ -283,6 +289,9 @@ describe("production workflows in the Temporal time-skipping sandbox", () => {
 
   it("exhausts five action attempts, compensates once, then preserves workflow failure", async () => {
     const attempts: number[] = [];
+    /**
+     * Simulates failing background action attempts to verify compensation behavior after attempt exhaustion.
+     */
     const runRoomAgentBackgroundAction = async () => {
       attempts.push(Context.current().info.attempt);
       throw new Error("Background action failed");
@@ -302,6 +311,9 @@ describe("production workflows in the Temporal time-skipping sandbox", () => {
 
   it("completes non-cancellable compensation after a real workflow cancellation", async () => {
     const entered = deferred();
+    /**
+     * Simulates an in-flight background action heartbeating until workflow cancellation.
+     */
     const runRoomAgentBackgroundAction = async () => {
       const context = Context.current();
       context.heartbeat();
