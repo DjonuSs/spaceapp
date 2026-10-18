@@ -532,6 +532,9 @@ test("local-images flag skips pull and adds --pull never to up for podman compos
     stderr: { write: () => {} }
   });
 
+  const pullSpec = executedSpecs.find((s) => s.command === "podman" && s.args?.includes("pull"));
+  assert.equal(pullSpec, undefined, "pull command is skipped when local-images is enabled");
+
   const upSpec = executedSpecs.find((s) => s.command === "podman" && s.args?.includes("up"));
   assert.ok(upSpec, "podman compose up was executed");
   assert.ok(
@@ -592,6 +595,30 @@ test("engine change supplied through answers.engine on existing install is rejec
       }
     ),
     /Cannot switch container engine from "docker" to "podman" on an existing installation/
+  );
+});
+
+test("answers.engine with unsupported engine throws error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-invalid-engine-"));
+  await assert.rejects(
+    () => run(
+      [
+        "install",
+        "--non-interactive",
+        "--answers",
+        JSON.stringify({ confirm: true, engine: "podmann" })
+      ],
+      {
+        env: { SPACEAPP_HOME: root },
+        platform: "linux",
+        inspectResources: async () => ({
+          cpuCount: 8,
+          totalMemoryBytes: 16 * 1024 ** 3,
+          freeDiskBytes: 100 * 1024 ** 3
+        })
+      }
+    ),
+    /Unsupported engine "podmann"/
   );
 });
 

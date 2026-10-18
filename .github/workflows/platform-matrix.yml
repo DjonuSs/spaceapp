@@ -94,7 +94,7 @@ jobs:
         run: spaceapp doctor
 
       - name: Test provider install command
-        run: spaceapp provider install opencode || true
+        run: spaceapp provider install opencode
 
       - name: Test spaceapp backup
         run: spaceapp backup
@@ -106,3 +106,4 @@ jobs:
       - name: Confirm no containers or runtime resources remain
         run: |
           test -z "$(podman ps -aq)"
+          test -z "$(podman volume ls -q)"

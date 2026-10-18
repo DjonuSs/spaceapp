@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
+import { Writable } from "node:stream";
 import { PromptController } from "./prompt-controller.mjs";
 import {
   copyFile,
@@ -1234,11 +1235,12 @@ async function planInteractiveSetup({
 
   let requestedEngine = parsed.requestedEngine;
   const answers = stdin?._spaceappPromptController?.answers;
-  if (!requestedEngine && answers?.engine) {
-    if (["docker", "podman"].includes(answers.engine)) {
-      requestedEngine = answers.engine;
-      parsed.requestedEngine = requestedEngine;
+  if (!requestedEngine && answers?.engine !== undefined) {
+    if (!["docker", "podman"].includes(answers.engine)) {
+      throw new Error(`Unsupported engine "${answers.engine}". Supported engines: docker, podman.`);
     }
+    requestedEngine = answers.engine;
+    parsed.requestedEngine = requestedEngine;
   }
 
   if (rawExisting && requestedEngine) {
@@ -2411,10 +2413,16 @@ async function supportBundleCommand({
   };
   if (resolvedEngine === "podman") {
     let rawJson = "";
+    const captureStream = new Writable({
+      write(chunk, _encoding, callback) {
+        rawJson += chunk.toString();
+        if (typeof callback === "function") callback();
+      }
+    });
     try {
       await execute({ command: "podman", args: ["info", "--format", "json"] }, {
         stdin: null,
-        stdout: { write: (c) => { rawJson += c; } },
+        stdout: captureStream,
         stderr: null
       });
       const parsed = JSON.parse(rawJson);
@@ -2436,10 +2444,16 @@ async function supportBundleCommand({
     }
   } else {
     let rawJson = "";
+    const captureStream = new Writable({
+      write(chunk, _encoding, callback) {
+        rawJson += chunk.toString();
+        if (typeof callback === "function") callback();
+      }
+    });
     try {
       await execute({ command: "docker", args: ["info", "--format", "{{json .}}"] }, {
         stdin: null,
-        stdout: { write: (c) => { rawJson += c; } },
+        stdout: captureStream,
         stderr: null
       });
       const parsed = JSON.parse(rawJson);
@@ -2819,14 +2833,16 @@ async function doctor({
     let podmanInfo = null;
     if (podmanService.code === 0) {
       let rawJson = "";
+      const captureStream = new Writable({
+        write(chunk, _encoding, callback) {
+          rawJson += chunk.toString();
+          if (typeof callback === "function") callback();
+        }
+      });
       try {
         await execute({ command: "podman", args: ["info", "--format", "json"] }, {
           stdin: null,
-          stdout: {
-            write: (chunk) => {
-              rawJson += chunk;
-            }
-          },
+          stdout: captureStream,
           stderr: null
         });
         podmanInfo = JSON.parse(rawJson);
