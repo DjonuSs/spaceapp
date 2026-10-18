@@ -47,6 +47,8 @@ export async function scheduleMemoryMutation(
   startWorkflow: MemoryMutationWorkflowStarter,
   commandHash?: string
 ): Promise<MemoryMutationStartResult> {
+  // Rollout order: Deploy workers before the API so workers accept the optional
+  // traceparent field in workflow input arguments before the API starts sending it.
   const input = withTurnTraceparent(memoryMutationWorkflowInputSchema.parse(rawInput));
   const workflowId = buildMemoryMutationWorkflowId(input.changeSetId, commandHash);
   try {

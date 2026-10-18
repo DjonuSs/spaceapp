@@ -478,6 +478,25 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
     emitSpan(turn.context, turn.spanId, turn.startTimeMs, Date.now(), turn.outcome, turn.error, turn.reasonCode, links);
   };
 
+  /** Merges turn call context and stored mission context, only inheriting workflowContext trace attributes when matching the same request trace. */
+  const mergeSupervisorTurnContext = (
+    callCtx: SpaceTraceHeaderPayload,
+    missionCtx?: SpaceTraceHeaderPayload
+  ): SpaceTraceHeaderPayload => {
+    const current = mergeTraceContexts(callCtx, missionCtx);
+    const sameRequest = Boolean(
+      current.traceId &&
+      workflowContext.traceId &&
+      current.traceId === workflowContext.traceId
+    );
+    return mergeTraceContexts(
+      current,
+      sameRequest
+        ? workflowContext
+        : { ...workflowContext, traceparent: undefined, traceId: undefined }
+    );
+  };
+
   /** Obtains or lazily initializes the active turn span tracking execution for a supervisor mission turn. */
   const ensureSupervisorTurnSpan = (callCtx: SpaceTraceHeaderPayload): ActiveSupervisorTurnSpan | null => {
     const info = workflowInfo();
@@ -486,10 +505,9 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
       (activeTurn && (!callCtx.traceId || callCtx.traceId === activeTurn.context.traceId)
         ? activeTurn.context.missionId
         : undefined);
-    const merged = mergeTraceContexts(
+    const merged = mergeSupervisorTurnContext(
       callCtx,
-      missionId ? missionContexts.get(missionId) : undefined,
-      workflowContext
+      missionId ? missionContexts.get(missionId) : undefined
     );
     if (!parseTraceparent(merged.traceparent)) return null;
     const turnKey = merged.agentRunId ?? `${merged.missionId ?? "mission"}:${merged.traceId ?? "trace"}`;
@@ -630,7 +648,7 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
       if (info.workflowType === "roomAgentSupervisorWorkflow") {
         if (input.activityType === "prepareRoomAgentBackgroundContinuation" || input.activityType === "settleRoomAgentBackgroundMission") {
           const stored = callCtx.missionId ? missionContexts.get(callCtx.missionId) : undefined;
-          const base = mergeTraceContexts(callCtx, stored, workflowContext);
+          const base = mergeSupervisorTurnContext(callCtx, stored);
           const parentSpan = activeTurn?.spanId ?? (callCtx.missionId ? deterministicSpanId(`workflow:${info.workflowId}:${info.runId}:${callCtx.missionId}:${base.traceId ?? "trace"}`) : workflowSpanId);
           const header = childContextHeader(base, parentSpan);
           if (header) encodeSpaceTraceHeader(input.headers, header);

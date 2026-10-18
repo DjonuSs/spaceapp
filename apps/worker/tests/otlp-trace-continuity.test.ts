@@ -62,6 +62,7 @@ vi.mock("@temporalio/workflow", async (importOriginal) => {
 
 import {
   decodeSpaceTraceHeader,
+  encodeSpaceTraceHeader,
   interceptors as createWorkflowInterceptors
 } from "../src/workflow-observability-interceptors.js";
 
@@ -157,7 +158,7 @@ async function startFakeOtlpCollector() {
     endpoint: `http://127.0.0.1:${port}`,
     payloads,
     spans,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+    close: () => new Promise<void>((resolve) => server.close((_err) => resolve()))
   };
 }
 
@@ -961,75 +962,78 @@ describe("End-to-end OTLP trace continuity across API, workflows, child workflow
     const { existsSync } = await import("node:fs");
 
     const collector = await startFakeOtlpCollector();
+    collectors.push(collector);
     const spans = createOtlpSpanExporter({
       endpoint: collector.endpoint,
       serviceName: "space-worker",
       flushIntervalMs: 60_000
     });
+    exporters.push(spans);
 
     const sinks = createWorkflowObservabilitySinks({ spans });
     const activityInterceptor = createActivityObservabilityInterceptors({ spans });
-
-    const env = await TestWorkflowEnvironment.createTimeSkipping();
-
-    const wfJs = fileURLToPath(new URL("../src/workflows.js", import.meta.url));
-    const workflowsPath = existsSync(wfJs) ? wfJs : wfJs.replace(/\.js$/, ".ts");
-
-    const workflowBundle = await bundleWorkflowCode({
-      workflowsPath,
-      workflowInterceptorModules: [workflowObservabilityInterceptorsPath],
-      logger: new DefaultLogger("ERROR")
-    });
-
-    let startedAttempts = 0;
-    const activities = {
-      recordDummyTurnStarted: async () => {
-        startedAttempts++;
-        if (startedAttempts === 1) {
-          throw new Error("Temporary failure for retry test");
-        }
-        return { status: "STARTED" };
-      },
-      recordDummyTurnCompleted: async () => {
-        return { response: "done" };
-      }
-    };
-
-    const worker = await Worker.create({
-      connection: env.nativeConnection,
-      taskQueue: "otlp-integration-queue",
-      workflowBundle,
-      activities,
-      sinks,
-      interceptors: {
-        activity: [activityInterceptor]
-      }
-    });
 
     const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
     const parentSpanId = "00f067aa0ba902b7";
     const traceparent = `00-${traceId}-${parentSpanId}-01`;
 
-    await worker.runUntil(async () => {
-      const handle = await env.client.workflow.start("dummyTurnWorkflow", {
-        taskQueue: "otlp-integration-queue",
-        workflowId: "test-integration-workflow-1",
-        args: [{ providerId: "opencode", prompt: "hello", traceparent }],
-        headers: {
-          "space-trace": {
-            traceId,
-            spanId: parentSpanId,
-            traceparent
+    const env = await TestWorkflowEnvironment.createTimeSkipping();
+    try {
+      const wfJs = fileURLToPath(new URL("../src/workflows.js", import.meta.url));
+      const workflowsPath = existsSync(wfJs) ? wfJs : wfJs.replace(/\.js$/, ".ts");
+
+      const workflowBundle = await bundleWorkflowCode({
+        workflowsPath,
+        workflowInterceptorModules: [workflowObservabilityInterceptorsPath],
+        logger: new DefaultLogger("ERROR")
+      });
+
+      let startedAttempts = 0;
+      const activities = {
+        recordDummyTurnStarted: async () => {
+          startedAttempts++;
+          if (startedAttempts === 1) {
+            throw new Error("Temporary failure for retry test");
           }
+          return { status: "STARTED" };
+        },
+        recordDummyTurnCompleted: async () => {
+          return { response: "done" };
+        }
+      };
+
+      const worker = await Worker.create({
+        connection: env.nativeConnection,
+        taskQueue: "otlp-integration-queue",
+        workflowBundle,
+        activities,
+        sinks,
+        interceptors: {
+          activity: [activityInterceptor]
         }
       });
-      const res = await handle.result();
-      expect(res.response).toBe("done");
-    });
 
-    await spans.flush();
-    await env.teardown();
-    await collector.close();
+      const headers: Record<string, unknown> = {};
+      encodeSpaceTraceHeader(headers, {
+        traceId,
+        traceparent
+      });
+
+      await worker.runUntil(async () => {
+        const handle = await env.client.workflow.start("dummyTurnWorkflow", {
+          taskQueue: "otlp-integration-queue",
+          workflowId: "test-integration-workflow-1",
+          args: [{ providerId: "opencode", prompt: "hello", traceparent }],
+          headers
+        });
+        const res = await handle.result();
+        expect(res.response).toBe("done");
+      });
+
+      await spans.flush();
+    } finally {
+      await env.teardown();
+    }
 
     expect(collector.spans.length).toBe(4);
     expect(collector.spans.every((s) => s.traceId === traceId)).toBe(true);

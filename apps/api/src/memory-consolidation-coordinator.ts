@@ -46,6 +46,8 @@ export async function scheduleMemoryConsolidation(
   workflowId: string,
   startWorkflow: MemoryConsolidationWorkflowStarter
 ): Promise<MemoryConsolidationStartResult> {
+  // Rollout order: Deploy workers before the API so workers accept the optional
+  // traceparent field in workflow input arguments before the API starts sending it.
   const input = withTurnTraceparent(memoryConsolidationWorkflowInputSchema.parse(rawInput));
   try {
     const handle = await startWorkflow(MEMORY_CONSOLIDATION_WORKFLOW_TYPE, {
