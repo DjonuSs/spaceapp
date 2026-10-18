@@ -84,7 +84,8 @@ above still applies. The separate `Temporal workflow tests` CI job runs this sui
 on Ubuntu with a three-minute limit on the test step. Committed histories are
 immutable: re-record only alongside a workflow change protected by `patched()`,
 retaining the older compatibility histories. Never re-record to hide a replay
-failure. The command is `npm run temporal:record-histories -w @space/worker`;
+failure. The command is `npm run temporal:record-histories -w @space/worker`
+(or `npm run temporal:record-histories -w @space/worker -- --only <versioned-name>`);
 see [the fixture guide](apps/worker/tests/fixtures/workflow-histories/README.md)
 for the pinned SDK, prerequisites and synthetic-history recording procedure.
 

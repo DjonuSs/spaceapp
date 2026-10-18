@@ -145,10 +145,21 @@ await record("memoryMutationWorkflow", mutationInput, { activities: memoryActivi
 
 // Wait for every real workflow run to succeed before writing any new fixtures.
 // Existing compatibility histories must never be replaced, even on an explicit run.
+const args = process.argv.slice(2);
+const only = args[0] === "--only" ? new Set(args.slice(1)) : new Set<string>();
+if (args.length > 0 && (args[0] !== "--only" || only.size === 0)) {
+  throw new Error("Usage: [--only <history-name> ...]");
+}
+for (const name of only) {
+  if (!recorded.has(name)) throw new Error(`Unknown history name: ${name}`);
+}
 const destination = new URL("../tests/fixtures/workflow-histories/", import.meta.url);
 await mkdir(destination, { recursive: true });
+let written = 0;
 for (const [name, history] of recorded) {
+  if (only.size > 0 && !only.has(name)) continue;
   const target = new URL(`${name}.json`, destination);
   await writeFile(target, history, { flag: "wx" });
+  written++;
 }
-console.log(`Wrote ${recorded.size} synthetic histories. Review the diff before committing.`);
+console.log(`Wrote ${written} synthetic histories. Review the diff before committing.`);

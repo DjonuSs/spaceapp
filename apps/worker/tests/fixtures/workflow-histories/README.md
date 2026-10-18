@@ -57,6 +57,8 @@ To record with Node.js 22.12 or newer in the supported Node.js 22 line:
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 npm run build -w @space/contracts
 npm run temporal:record-histories -w @space/worker
+# Or to selectively record only absent versioned targets without touching existing fixtures:
+npm run temporal:record-histories -w @space/worker -- --only <versioned-name>
 ```
 
 The recorder is `apps/worker/scripts/record-workflow-histories.ts`. It starts its
