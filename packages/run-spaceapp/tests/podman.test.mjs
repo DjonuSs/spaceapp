@@ -507,3 +507,92 @@ test("inspectStoragePlan recognizes Podman image IDs with or without sha256: pre
   assert.equal(plan.resources.engineMemoryBytes, 8 * 1024 ** 3);
 });
 
+test("local-images flag skips pull and adds --pull never to up for podman compose", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-local-images-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdoutChunks = [];
+  const executedSpecs = [];
+
+  const execute = async (spec) => {
+    executedSpecs.push(spec);
+    return 0;
+  };
+
+  await run(["--local-images", "up"], {
+    env: { SPACEAPP_HOME: root },
+    execute,
+    stdout: { write: (msg) => stdoutChunks.push(msg) },
+    stderr: { write: () => {} }
+  });
+
+  const upSpec = executedSpecs.find((s) => s.command === "podman" && s.args?.includes("up"));
+  assert.ok(upSpec, "podman compose up was executed");
+  assert.ok(
+    upSpec.args.includes("--pull") && upSpec.args[upSpec.args.indexOf("--pull") + 1] === "never",
+    "up includes --pull never"
+  );
+});
+
+test("reinstall rejects engine switch on existing install before approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-reinstall-engine-"));
+  const stderrChunks = [];
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  await saveConfig(root, config);
+
+  const code = await run(["reinstall", "--engine", "podman"], {
+    env: { SPACEAPP_HOME: root },
+    stderr: { write: (msg) => stderrChunks.push(msg) }
+  });
+
+  assert.equal(code, 1);
+  assert.match(
+    stderrChunks.join(""),
+    /Cannot switch container engine from "docker" to "podman" on an existing installation/
+  );
+});
+
+test("engine change supplied through answers.engine on existing install is rejected", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-answers-engine-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  await saveConfig(root, config);
+
+  await assert.rejects(
+    run(
+      [
+        "install",
+        "--non-interactive",
+        "--answers",
+        JSON.stringify({ confirm: true, engine: "podman", action: "repair" })
+      ],
+      {
+        env: { SPACEAPP_HOME: root },
+        platform: "linux",
+        inspectResources: async () => ({
+          cpuCount: 8,
+          totalMemoryBytes: 16 * 1024 ** 3,
+          freeDiskBytes: 100 * 1024 ** 3
+        })
+      }
+    ),
+    /Cannot switch container engine from "docker" to "podman" on an existing installation/
+  );
+});
+
+

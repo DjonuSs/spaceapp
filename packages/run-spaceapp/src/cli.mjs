@@ -444,7 +444,7 @@ export async function run(argv, {
   if (globalFlags.localImages) {
     const originalExecute = execute;
     execute = async (spec, io) => {
-      if (spec.command === "docker" && spec.args?.includes("compose")) {
+      if ((spec.command === "docker" || spec.command === "podman") && spec.args?.includes("compose")) {
         if (spec.args.at(-1) === "pull") {
           stdout.write("Local images only: skipping registry downloads; missing images will fail startup.\n");
           return 0;
@@ -561,6 +561,21 @@ export async function run(argv, {
     return repairRuntime({ root, config, platform, stdin, stdout, stderr, execute: runtimeExecute, request, sleep, dryRun });
   }
   if (command === "reinstall") {
+    const engineIdx = args.indexOf("--engine");
+    if (engineIdx !== -1) {
+      const requestedEngine = args[engineIdx + 1];
+      if (!["docker", "podman"].includes(requestedEngine)) {
+        stderr.write('Usage: spaceapp reinstall [--engine docker|podman]\n');
+        return 1;
+      }
+      const savedEngine = config?.engine ?? "docker";
+      if (requestedEngine !== savedEngine) {
+        stderr.write(
+          `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
+        );
+        return 1;
+      }
+    }
     const keepData = !args.includes("--purge-data");
     return reinstallCommand({ root, config, platform, stdin, stdout, stderr, execute: runtimeExecute, request, sleep, keepData });
   }
@@ -1222,6 +1237,16 @@ async function planInteractiveSetup({
   if (!requestedEngine && answers?.engine) {
     if (["docker", "podman"].includes(answers.engine)) {
       requestedEngine = answers.engine;
+      parsed.requestedEngine = requestedEngine;
+    }
+  }
+
+  if (rawExisting && requestedEngine) {
+    const savedEngine = rawExisting.engine ?? "docker";
+    if (requestedEngine !== savedEngine) {
+      throw new Error(
+        `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".`
+      );
     }
   }
 
