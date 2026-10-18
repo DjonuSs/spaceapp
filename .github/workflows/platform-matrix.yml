@@ -106,4 +106,5 @@ jobs:
       - name: Confirm no containers or runtime resources remain
         run: |
           test -z "$(podman ps -aq)"
-          test -z "$(podman volume ls -q)"
+          VOLUMES="$(podman volume ls -q)"
+          test -z "$VOLUMES"

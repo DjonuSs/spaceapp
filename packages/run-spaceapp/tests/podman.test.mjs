@@ -564,6 +564,18 @@ test("reinstall rejects engine switch on existing install before approval", asyn
     stderrChunks.join(""),
     /Cannot switch container engine from "docker" to "podman" on an existing installation/
   );
+
+  stderrChunks.length = 0;
+  const codeEqual = await run(["reinstall", "--engine=podman"], {
+    env: { SPACEAPP_HOME: root },
+    stderr: { write: (msg) => stderrChunks.push(msg) }
+  });
+
+  assert.equal(codeEqual, 1);
+  assert.match(
+    stderrChunks.join(""),
+    /Cannot switch container engine from "docker" to "podman" on an existing installation/
+  );
 });
 
 test("engine change supplied through answers.engine on existing install is rejected", async () => {

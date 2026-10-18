@@ -562,9 +562,17 @@ export async function run(argv, {
     return repairRuntime({ root, config, platform, stdin, stdout, stderr, execute: runtimeExecute, request, sleep, dryRun });
   }
   if (command === "reinstall") {
-    const engineIdx = args.indexOf("--engine");
-    if (engineIdx !== -1) {
-      const requestedEngine = args[engineIdx + 1];
+    let requestedEngine;
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index];
+      if (argument === "--engine" && index + 1 < args.length) {
+        requestedEngine = args[index + 1];
+        index += 1;
+      } else if (argument.startsWith("--engine=")) {
+        requestedEngine = argument.slice("--engine=".length);
+      }
+    }
+    if (requestedEngine !== undefined) {
       if (!["docker", "podman"].includes(requestedEngine)) {
         stderr.write('Usage: spaceapp reinstall [--engine docker|podman]\n');
         return 1;
