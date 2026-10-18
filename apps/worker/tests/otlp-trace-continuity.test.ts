@@ -94,6 +94,7 @@ interface OtlpExportedSpan {
   status: { code: number };
 }
 
+/** Decodes an array of OTLP attribute key/value pairs into a flat record of strings and numbers. */
 function decodeAttributes(entries: OtlpExportedAttribute[] | undefined): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const entry of entries ?? []) {
@@ -103,6 +104,7 @@ function decodeAttributes(entries: OtlpExportedAttribute[] | undefined): Record<
   return out;
 }
 
+/** Spins up an ephemeral local HTTP server implementing the OTLP/HTTP traces JSON receiver contract. */
 async function startFakeOtlpCollector() {
   const payloads: unknown[] = [];
   const spans: OtlpExportedSpan[] = [];
@@ -159,6 +161,7 @@ async function startFakeOtlpCollector() {
   };
 }
 
+/** Synthesizes mock WorkflowInfo with customizable execution and identity parameters. */
 function makeWorkflowInfo(overrides: Partial<WorkflowInfo> & Pick<WorkflowInfo, "workflowId" | "runId" | "workflowType">): WorkflowInfo {
   return {
     taskQueue: "space-default",
@@ -950,5 +953,108 @@ describe("End-to-end OTLP trace continuity across API, workflows, child workflow
     });
     expect(bundle.code.length).toBeGreaterThan(1000);
   }, 60_000);
+
+  it("INTEGRATION TEST: runs a real workflow in TestWorkflowEnvironment.createTimeSkipping with stub activities, asserting trace ID continuity, parentage, retries, and OTLP export", async () => {
+    const { TestWorkflowEnvironment } = await import("@temporalio/testing");
+    const { Worker, bundleWorkflowCode, DefaultLogger } = await import("@temporalio/worker");
+    const { fileURLToPath } = await import("node:url");
+    const { existsSync } = await import("node:fs");
+
+    const collector = await startFakeOtlpCollector();
+    const spans = createOtlpSpanExporter({
+      endpoint: collector.endpoint,
+      serviceName: "space-worker",
+      flushIntervalMs: 60_000
+    });
+
+    const sinks = createWorkflowObservabilitySinks({ spans });
+    const activityInterceptor = createActivityObservabilityInterceptors({ spans });
+
+    const env = await TestWorkflowEnvironment.createTimeSkipping();
+
+    const wfJs = fileURLToPath(new URL("../src/workflows.js", import.meta.url));
+    const workflowsPath = existsSync(wfJs) ? wfJs : wfJs.replace(/\.js$/, ".ts");
+
+    const workflowBundle = await bundleWorkflowCode({
+      workflowsPath,
+      workflowInterceptorModules: [workflowObservabilityInterceptorsPath],
+      logger: new DefaultLogger("ERROR")
+    });
+
+    let startedAttempts = 0;
+    const activities = {
+      recordDummyTurnStarted: async () => {
+        startedAttempts++;
+        if (startedAttempts === 1) {
+          throw new Error("Temporary failure for retry test");
+        }
+        return { status: "STARTED" };
+      },
+      recordDummyTurnCompleted: async () => {
+        return { response: "done" };
+      }
+    };
+
+    const worker = await Worker.create({
+      connection: env.nativeConnection,
+      taskQueue: "otlp-integration-queue",
+      workflowBundle,
+      activities,
+      sinks,
+      interceptors: {
+        activity: [activityInterceptor]
+      }
+    });
+
+    const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const parentSpanId = "00f067aa0ba902b7";
+    const traceparent = `00-${traceId}-${parentSpanId}-01`;
+
+    await worker.runUntil(async () => {
+      const handle = await env.client.workflow.start("dummyTurnWorkflow", {
+        taskQueue: "otlp-integration-queue",
+        workflowId: "test-integration-workflow-1",
+        args: [{ providerId: "opencode", prompt: "hello", traceparent }],
+        headers: {
+          "space-trace": {
+            traceId,
+            spanId: parentSpanId,
+            traceparent
+          }
+        }
+      });
+      const res = await handle.result();
+      expect(res.response).toBe("done");
+    });
+
+    await spans.flush();
+    await env.teardown();
+    await collector.close();
+
+    expect(collector.spans.length).toBe(4);
+    expect(collector.spans.every((s) => s.traceId === traceId)).toBe(true);
+
+    const wfSpan = collector.spans.find((s) => s.name === "workflow dummyTurnWorkflow");
+    expect(wfSpan).toBeDefined();
+    expect(wfSpan!.parentSpanId).toBe(parentSpanId);
+    expect(wfSpan!.status.code).toBe(0);
+
+    const act1Attempts = collector.spans.filter((s) => s.name === "activity recordDummyTurnStarted");
+    expect(act1Attempts.length).toBe(2);
+    expect(act1Attempts[0]!.parentSpanId).toBe(wfSpan!.spanId);
+    expect(act1Attempts[1]!.parentSpanId).toBe(wfSpan!.spanId);
+    expect(act1Attempts[0]!.attributes["space.attempt"]).toBe(1);
+    expect(act1Attempts[0]!.attributes["space.outcome"]).toBe("FAILED");
+    expect(act1Attempts[0]!.status.code).toBe(2);
+    expect(act1Attempts[1]!.attributes["space.attempt"]).toBe(2);
+    expect(act1Attempts[1]!.attributes["space.outcome"]).toBe("COMPLETED");
+    expect(act1Attempts[1]!.status.code).toBe(0);
+
+    const act2 = collector.spans.find((s) => s.name === "activity recordDummyTurnCompleted");
+    expect(act2).toBeDefined();
+    expect(act2!.parentSpanId).toBe(wfSpan!.spanId);
+    expect(act2!.attributes["space.outcome"]).toBe("COMPLETED");
+    expect(act2!.status.code).toBe(0);
+  }, 120_000);
 });
 

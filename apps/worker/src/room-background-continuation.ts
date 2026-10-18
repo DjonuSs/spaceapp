@@ -12,6 +12,7 @@ import { SpaceConflictError, redactMemoryText, type SpaceStore } from "@space/ru
 import { roomActionSummary } from "./room-action-summary.js";
 import { DEFAULT_ROOM_AGENT_MAX_CONTINUATIONS, DEFAULT_ROOM_AGENT_MAX_MISSION_TOKENS, ROOM_AGENT_CONTINUATION_LIMIT, ROOM_AGENT_TOKEN_LIMIT } from "./room-agent-limits.js";
 
+/** Summarizes settled action results and status counts into a bounded JSON evidence string. */
 export function continuationEvidence(actions: RoomAgentActionRecord[], budget: number): string {
   // Count the entire mission, including synchronous actions. Background roots
   // are only a scheduling distinction, not the record of completed work.
@@ -47,6 +48,7 @@ export type BackgroundContinuationResult =
 
 interface MissionTokenUsage { usedTokens: number; countedThroughRunId: string }
 
+/** Extracts recorded token usage and run checkpoint from mission execution state. */
 function recordedTokenUsage(executionState: Record<string, unknown>): MissionTokenUsage | null {
   const value = executionState.tokenUsage as Partial<MissionTokenUsage> | undefined;
   return value && Number.isSafeInteger(value.usedTokens) && (value.usedTokens as number) >= 0 && typeof value.countedThroughRunId === "string"
@@ -54,6 +56,7 @@ function recordedTokenUsage(executionState: Record<string, unknown>): MissionTok
     : null;
 }
 
+/** Prepares a continuation turn item for background execution with bounded token/continuation limits. */
 export async function prepareBackgroundContinuation(input: {
   roomId: string; missionId: string; continuationId: string;
 }, store: SpaceStore, maxContinuations = DEFAULT_ROOM_AGENT_MAX_CONTINUATIONS,
@@ -160,6 +163,7 @@ maxMissionTokens: number | null = DEFAULT_ROOM_AGENT_MAX_MISSION_TOKENS): Promis
   }
 }
 
+/** Marks an unstarted or superseded supervisor turn as INTERRUPTED. */
 export async function discardSupervisorTurn(item: RoomAgentSupervisorQueueItem, reason: string, store: SpaceStore) {
   const record = await store.getRoomAgentTurn(item.missionId, item.turn.agentRunId);
   if (!record || !["QUEUED", "RUNNING"].includes(record.run.status)) return;
@@ -170,6 +174,7 @@ export async function discardSupervisorTurn(item: RoomAgentSupervisorQueueItem, 
   await store.updateSpaceAgentMessage(record.run.responseMessageId, { status: "INTERRUPTED", content: reason });
 }
 
+/** Determines whether the supervisor queue item is ready to execute, paused, or should be skipped. */
 export async function supervisorTurnState(item: RoomAgentSupervisorQueueItem, store: SpaceStore): Promise<"READY" | "PAUSED" | "SKIP"> {
   const mission = await store.getRoomAgentMission(item.turn.roomId, item.missionId);
   const record = await store.getRoomAgentTurn(item.missionId, item.turn.agentRunId);
@@ -190,6 +195,7 @@ export async function supervisorTurnState(item: RoomAgentSupervisorQueueItem, st
   return "READY";
 }
 
+/** Finalizes a supervisor turn, recording terminal state and checkpointing mission status. */
 export async function finishSupervisorTurn(input: {
   item: RoomAgentSupervisorQueueItem; status: "COMPLETED" | "FAILED" | "INTERRUPTED"; statusReason: string;
 }, store: SpaceStore) {

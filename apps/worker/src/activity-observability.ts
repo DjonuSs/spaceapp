@@ -60,6 +60,7 @@ export function failureReasonScope<T>(execute: () => Promise<T>): { promise: Pro
   return { promise: observations.run(observation, execute), reasonCode: () => observation.reasonCode };
 }
 
+/** Generates non-zero random hex string of the given byte length. */
 function randomNonZeroHex(bytes: number): string {
   for (;;) {
     const value = randomBytes(bytes).toString("hex");
@@ -96,6 +97,7 @@ const nestedKeys = ["turn", "item", "bridge", "input", "turnInput"] as const;
 
 type CorrelationKey = (typeof correlationKeys)[number];
 
+/** Traverses nested arguments up to the specified depth to collect allowlisted correlation identifiers. */
 function readCorrelation(value: unknown, into: Partial<Record<CorrelationKey, string>>, depth: number): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const record = value as Record<string, unknown>;
@@ -125,6 +127,7 @@ export function activityCorrelation(args: readonly unknown[]): Record<string, st
   return correlation;
 }
 
+/** Maps thrown error instances or error objects to bounded standard error codes. */
 function errorCodeOf(error: unknown): string {
   const record = error as { code?: unknown; type?: unknown; name?: unknown } | null;
   if (isSafeErrorCode(record?.code)) return record!.code as string;
@@ -137,6 +140,7 @@ function errorCodeOf(error: unknown): string {
   return "ACTIVITY_ERROR";
 }
 
+/** Determines whether an activity return value denotes a structured failure outcome. */
 function isFailedResult(value: unknown): boolean {
   return Boolean(value && typeof value === "object" && (value as { status?: unknown }).status === "FAILED");
 }
@@ -151,12 +155,14 @@ export interface ObserveActivityDependencies {
   headers?: Headers;
 }
 
+/** Extracts and parses traceparent from activity arguments if present. */
 function activityTraceparent(args: readonly unknown[]) {
   const found: Partial<Record<CorrelationKey, string>> = {};
   for (const arg of args) readCorrelation(arg, found, 2);
   return parseTraceparent(found.traceparent);
 }
 
+/** Wraps activity execution with metrics, structured logging, failure reason propagation, and OTLP spans. */
 export async function observeActivityExecution<T>(
   info: ActivityInfo,
   args: readonly unknown[],
@@ -202,6 +208,7 @@ export async function observeActivityExecution<T>(
   workerLog("info", "activity.started", { ...base, queueMs });
   const observation: ActivityObservation = { reasonCode: null };
 
+  /** Completes activity observation: logs finished event, records metrics, and exports activity span. */
   const finish = (outcome: ActivityOutcome, reasonCode: string | null, errorName: string | null) => {
     const durationMs = Math.max(0, now() - startedAt);
     metrics.activitiesInFlight.inc(labels, -1);

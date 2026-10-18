@@ -20,6 +20,7 @@ import {
 const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 const secretPrompt = "PRIVATE PROMPT: deploy with token sk-live-worker-secret-123";
 
+/** Generates mock ActivityInfo with customizable defaults for testing. */
 const info = (overrides: Partial<Parameters<typeof observeActivityExecution>[0]> = {}) => ({
   activityType: "runCodexAppServerTurn",
   activityId: "3",
@@ -30,6 +31,7 @@ const info = (overrides: Partial<Parameters<typeof observeActivityExecution>[0]>
   ...overrides
 });
 
+/** Intercepts worker log records into memory for test assertions and returns a cleanup function. */
 function capture() {
   const records: Array<Record<string, unknown>> = [];
   const lines: string[] = [];
@@ -162,6 +164,7 @@ describe("worker metrics endpoint", () => {
     const port = 20_000 + Math.floor(Math.random() * 20_000);
     const server = await startWorkerMetricsServer({ host: "127.0.0.1", port });
     expect(server).not.toBeNull();
+    /** Performs a test HTTP GET request against the local Prometheus metrics port. */
     const get = (path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
       request({ host: "127.0.0.1", port, path }, (response) => {
         let body = "";

@@ -21,6 +21,7 @@ export interface RequestTraceContext {
   inbound: boolean;
 }
 
+/** Generates non-zero random hex bytes of the specified length for trace/span IDs. */
 function randomHex(bytes: number): string {
   for (;;) {
     const value = randomBytes(bytes).toString("hex");
@@ -28,6 +29,7 @@ function randomHex(bytes: number): string {
   }
 }
 
+/** Parses incoming traceparent header or generates fresh trace identifiers for an HTTP request. */
 export function createRequestTraceContext(header: unknown, random: (bytes: number) => string = randomHex): RequestTraceContext {
   const inbound = parseTraceparent(Array.isArray(header) ? header[0] : header);
   const w3cTraceId = inbound?.traceId ?? random(16);

@@ -260,6 +260,7 @@ export class TemporalRoomAgentWorkflowCoordinator implements RoomAgentWorkflowCo
   }
 }
 
+/** Creates a live TemporalRoomAgentWorkflowCoordinator when enabled, otherwise a DisabledRoomAgentWorkflowCoordinator. */
 export function createRoomAgentWorkflowCoordinator(options: {
   enabled: boolean;
   address: string;

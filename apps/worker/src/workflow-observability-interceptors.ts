@@ -160,6 +160,7 @@ export function encodeSpaceTraceHeader(headers: Headers, payload: SpaceTraceHead
 export function extractArgsTraceContext(args: readonly unknown[], workflowType?: string): SpaceTraceHeaderPayload {
   const out: SpaceTraceHeaderPayload = {};
   const links: SpaceTraceLinkPayload[] = [];
+  /** Inspects a candidate argument object to extract trace correlation identifiers and span links. */
   const visit = (candidate: Record<string, unknown> | null) => {
     if (!candidate) return;
     const tp = parseTraceparent(candidate.traceparent);
@@ -230,6 +231,7 @@ export function extractArgsTraceContext(args: readonly unknown[], workflowType?:
 /** Extracts W3C traceparent and correlation IDs from Temporal workflow memo. */
 function extractMemoTraceContext(memo: Record<string, unknown> | undefined): SpaceTraceHeaderPayload {
   if (!memo) return {};
+  /** Decodes a memo field value supporting raw strings and Temporal Payload objects. */
   const readField = (key: string): unknown => {
     const raw = memo[key];
     const record = asRecord(raw);
@@ -457,6 +459,7 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
     });
   };
 
+  /** Emits the active supervisor turn workflow span and links when the turn completes or transitions. */
   const flushActiveSupervisorTurn = () => {
     if (!activeTurn || activeTurn.emitted) return;
     activeTurn.emitted = true;
@@ -475,6 +478,7 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
     emitSpan(turn.context, turn.spanId, turn.startTimeMs, Date.now(), turn.outcome, turn.error, turn.reasonCode, links);
   };
 
+  /** Obtains or lazily initializes the active turn span tracking execution for a supervisor mission turn. */
   const ensureSupervisorTurnSpan = (callCtx: SpaceTraceHeaderPayload): ActiveSupervisorTurnSpan | null => {
     const info = workflowInfo();
     const missionId =
@@ -518,6 +522,7 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
     return activeTurn;
   };
 
+  /** Rewrites traceparent in the header payload so child activities and workflows point to parentSpanId. */
   const childContextHeader = (baseCtx: SpaceTraceHeaderPayload, parentSpanId: string): SpaceTraceHeaderPayload | null => {
     const parsed = parseTraceparent(baseCtx.traceparent);
     if (!parsed) return null;
@@ -527,6 +532,7 @@ export const interceptors: WorkflowInterceptorsFactory = () => {
     };
   };
 
+  /** Caches mission trace contexts from pending or interrupted queue items in supervisor workflow args. */
   const rememberSupervisorItemsFromArgs = (args: readonly unknown[]) => {
     for (const arg of args) {
       const rec = asRecord(arg);

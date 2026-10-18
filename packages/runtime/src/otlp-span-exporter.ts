@@ -59,12 +59,13 @@ export interface OtlpSpanExporterOptions {
   timeoutMs?: number;
 }
 
+/** Helper regex factory for fixed-length hex identifier matching. */
 const hexId = (length: number) => new RegExp(`^[0-9a-f]{${length}}$`);
 const traceIdPattern = hexId(32);
 const spanIdPattern = hexId(16);
 
 const httpMethodPattern = /^[A-Z]{3,12}$/;
-const httpRoutePattern = /^\/[A-Za-z0-9/_:.*-]{0,239}$/;
+const httpRoutePattern = /^(?:\/[A-Za-z0-9/_:.*-]{0,239}|unmatched)$/;
 const boundedCodePattern = /^[A-Z][A-Z0-9_]{1,95}$/;
 const boundedTypePattern = /^[A-Za-z][A-Za-z0-9_:-]{1,127}$/;
 const correlationIdPattern = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,239}$/;
@@ -118,6 +119,7 @@ const spanLinkAttributeRules: Readonly<Record<string, AttributeKind>> = {
 export const ALLOWED_SPAN_ATTRIBUTE_KEYS = Object.freeze(Object.keys(spanAttributeRules));
 export const ALLOWED_SPAN_LINK_ATTRIBUTE_KEYS = Object.freeze(Object.keys(spanLinkAttributeRules));
 
+/** Validates whether an attribute value meets the structural and safety constraints for its kind. */
 function isAllowedAttributeValue(kind: AttributeKind, value: unknown): value is string | number {
   if (kind === "int") {
     return typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value >= 0;
@@ -166,10 +168,12 @@ export function otlpTracesUrl(value: string | undefined): string | null {
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}/v1/traces`;
 }
 
+/** Converts a scalar attribute value to an OTLP typed value object. */
 function attributeValue(value: string | number) {
   return typeof value === "number" && Number.isInteger(value) ? { intValue: String(value) } : { stringValue: String(value) };
 }
 
+/** Serializes span links ensuring trace and span ID invariants and attribute allowlists. */
 function serializeSpanLinks(links: readonly SpanLink[] | undefined) {
   if (!links?.length) return [];
   const out: Array<{ traceId: string; spanId: string; attributes?: Array<{ key: string; value: { intValue: string } | { stringValue: string } }> }> = [];
@@ -186,6 +190,7 @@ function serializeSpanLinks(links: readonly SpanLink[] | undefined) {
   return out;
 }
 
+/** Builds an OTLP/HTTP JSON request payload from a batch of server spans. */
 export function otlpTraceRequest(spans: readonly ServerSpan[], serviceName: string) {
   return {
     resourceSpans: [{
@@ -214,6 +219,7 @@ export function otlpTraceRequest(spans: readonly ServerSpan[], serviceName: stri
   };
 }
 
+/** Creates a background OTLP span exporter with bounded memory, timeout protection, and batching. */
 export function createOtlpSpanExporter(options: OtlpSpanExporterOptions): SpanExporter {
   const url = otlpTracesUrl(options.endpoint);
   if (!url) throw new Error("Invalid OTLP endpoint.");
@@ -225,6 +231,7 @@ export function createOtlpSpanExporter(options: OtlpSpanExporterOptions): SpanEx
   const stats: SpanExporterStats = { exported: 0, dropped: 0, failed: 0 };
   let inFlight: Promise<void> | null = null;
 
+  /** Flushes a single batch of queued spans to the OTLP traces HTTP endpoint. */
   const flushOnce = async () => {
     const batch = queue.splice(0, batchSize);
     if (!batch.length) return;

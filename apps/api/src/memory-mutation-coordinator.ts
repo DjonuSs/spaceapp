@@ -36,10 +36,12 @@ export type MemoryMutationWorkflowStarter = (
   options: WorkflowStartOptions
 ) => Promise<WorkflowStartHandle>;
 
+/** Checks whether the error signifies that the mutation workflow execution has already started. */
 function isAlreadyStarted(error: unknown): boolean {
   return error instanceof Error && error.name === "WorkflowExecutionAlreadyStartedError";
 }
 
+/** Schedules a memory mutation workflow on Temporal with correlation memo and traceparent. */
 export async function scheduleMemoryMutation(
   rawInput: MemoryMutationWorkflowInput,
   startWorkflow: MemoryMutationWorkflowStarter,
@@ -94,6 +96,7 @@ class TemporalMemoryMutationCoordinator implements MemoryMutationCoordinator {
   }
 }
 
+/** Creates a live or disabled MemoryMutationCoordinator based on configuration flags. */
 export function createMemoryMutationCoordinator(options: {
   enabled: boolean;
   address: string;

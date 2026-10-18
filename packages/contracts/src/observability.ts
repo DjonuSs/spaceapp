@@ -111,6 +111,7 @@ export function parseTraceparent(value: unknown): ParsedTraceparent | null {
   return { traceId, parentId, flags };
 }
 
+/** Formats a W3C traceparent header string from traceId, spanId, and optional flags. */
 export function formatTraceparent(traceId: string, spanId: string, flags = "01"): string {
   return `00-${traceId}-${spanId}-${flags}`;
 }
@@ -120,6 +121,7 @@ export function traceIdFromTraceparent(value: unknown): string | null {
   return parseTraceparent(value)?.traceId ?? null;
 }
 
+/** Deterministic 64-bit mixer hash producing two non-zero 32-bit unsigned integers from a seed string. */
 function mix64(seed: string, salt: number): [number, number] {
   let h1 = (0xdeadbeef ^ seed.length ^ salt) >>> 0;
   let h2 = (0x41c6ce57 ^ seed.length ^ Math.imul(salt, 0x9e3779b1)) >>> 0;

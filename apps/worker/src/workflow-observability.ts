@@ -18,6 +18,7 @@ export const workflowObservabilityInterceptorsPath = existsSync(candidateJs)
   ? candidateJs
   : candidateJs.replace(/\.js$/, ".ts");
 
+/** Translates a workflow sink span payload into a ServerSpan and passes it to the exporter. */
 export function recordWorkflowSpanFromSink(
   payload: WorkflowSpanRecordPayload,
   spans: SpanExporter | null | undefined

@@ -35,10 +35,12 @@ export type MemoryConsolidationWorkflowStarter = (
   options: WorkflowStartOptions
 ) => Promise<WorkflowStartHandle>;
 
+/** Checks whether the error signifies that the consolidation workflow execution has already started. */
 function isAlreadyStarted(error: unknown): boolean {
   return error instanceof Error && error.name === "WorkflowExecutionAlreadyStartedError";
 }
 
+/** Schedules a memory consolidation workflow on Temporal with correlation memo and traceparent. */
 export async function scheduleMemoryConsolidation(
   rawInput: MemoryConsolidationWorkflowInput,
   workflowId: string,
@@ -96,6 +98,7 @@ class TemporalMemoryConsolidationCoordinator implements MemoryConsolidationCoord
   }
 }
 
+/** Creates a live or disabled MemoryConsolidationCoordinator based on configuration flags. */
 export function createMemoryConsolidationCoordinator(options: {
   enabled: boolean;
   address: string;
