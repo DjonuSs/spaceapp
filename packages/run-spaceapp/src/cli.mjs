@@ -3095,7 +3095,7 @@ async function doctor({
       const isRootless = Boolean(podmanInfo?.host?.security?.rootless);
       checks.push({
         name: "Podman rootless",
-        ok: true,
+        ok: isRootless,
         detail: isRootless ? "rootless" : "rootful"
       });
 

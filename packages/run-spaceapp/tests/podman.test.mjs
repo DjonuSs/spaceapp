@@ -357,6 +357,44 @@ test("doctor diagnostics report Podman facts including rootless, cgroup v2, and 
   assert.match(stdout.value(), /PASS Podman resource limit delegation: CPU and memory controllers delegated/);
 });
 
+test("doctor diagnostics fail when Podman is rootful", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-rootful-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["doctor"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("--format") && spec.args?.includes("json")) {
+        io.stdout.write(JSON.stringify({
+          version: { Version: "5.1.0" },
+          host: {
+            security: { rootless: false },
+            cgroupVersion: "v2",
+            cgroupControllers: ["cpu", "memory", "pids"]
+          }
+        }));
+      }
+      return 0;
+    }
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.value(), /FAIL Podman rootless: rootful/);
+});
+
 test("support-bundle collects Podman facts without secrets", async () => {
   const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-bundle-"));
   const config = createDefaultConfig({
