@@ -1081,7 +1081,7 @@ export async function prepareInstallation(root, {
     const existingEngine = existingConfig.engine ?? "docker";
     if (engine !== undefined && engine !== existingEngine) {
       throw new Error(
-        `Cannot switch container engine from "${existingEngine}" to "${engine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${engine}", and run "spaceapp restore".`
+        `Cannot switch container engine from "${existingEngine}" to "${engine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${engine}", and run "spaceapp restore".`
       );
     }
   }

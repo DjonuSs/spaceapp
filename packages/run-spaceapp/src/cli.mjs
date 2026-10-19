@@ -569,9 +569,13 @@ export async function run(argv, {
     let requestedEngine;
     for (let index = 0; index < args.length; index += 1) {
       const argument = args[index];
-      if (argument === "--engine" && index + 1 < args.length) {
-        requestedEngine = args[index + 1];
-        index += 1;
+      if (argument === "--engine") {
+        if (index + 1 < args.length) {
+          requestedEngine = args[index + 1];
+          index += 1;
+        } else {
+          requestedEngine = "";
+        }
       } else if (argument.startsWith("--engine=")) {
         requestedEngine = argument.slice("--engine=".length);
       }
@@ -584,7 +588,7 @@ export async function run(argv, {
       const savedEngine = config?.engine ?? "docker";
       if (requestedEngine !== savedEngine) {
         stderr.write(
-          `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
+          `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
         );
         return 1;
       }
@@ -1067,7 +1071,7 @@ async function installCommand(args, {
             { platform, stderr }
           );
           if (statusCode !== 0) {
-            stderr.write(`SpaceApp service status check failed with Docker exit ${statusCode}.\n`);
+            stderr.write(`SpaceApp service status check failed with ${engineLabel} exit ${statusCode}.\n`);
           }
         } catch (error) {
           stderr.write(
@@ -1087,7 +1091,7 @@ async function installCommand(args, {
               { platform, stderr }
             );
             if (logsCode !== 0) {
-              stderr.write(`SpaceApp startup log check failed with Docker exit ${logsCode}.\n`);
+              stderr.write(`SpaceApp startup log check failed with ${engineLabel} exit ${logsCode}.\n`);
             }
           } catch (error) {
             stderr.write(
@@ -1270,7 +1274,7 @@ async function planInteractiveSetup({
     const savedEngine = rawExisting.engine ?? "docker";
     if (requestedEngine !== savedEngine) {
       throw new Error(
-        `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker volumes are not visible to Podman. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".`
+        `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".`
       );
     }
   }
@@ -1312,11 +1316,7 @@ async function planInteractiveSetup({
         } else {
           let podmanWorking = false;
           try {
-            const podmanCode = await execute(
-              { command: "podman", args: ["--version"], timeoutMs: 15000 },
-              { stdin: null, stdout: null, stderr: null }
-            );
-            podmanWorking = podmanCode === 0;
+            podmanWorking = await podmanIsReady(execute);
           } catch {
             podmanWorking = false;
           }
@@ -1599,6 +1599,12 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
     const ready = await podmanIsReady(execute);
     if (!ready) {
       stderr.write(`Podman is not running or accessible. ${podmanInstallHelp(platform)}\n`);
+      return 1;
+    }
+    const podmanInfo = await getPodmanInfo(execute);
+    const isRootless = Boolean(podmanInfo?.host?.security?.rootless);
+    if (!isRootless) {
+      stderr.write("Rootless Podman is required. Running Podman as root is not supported.\n");
       return 1;
     }
   } else {
@@ -2614,6 +2620,33 @@ export function cgroupLimitsDelegated(controllers, platform) {
 }
 
 /**
+ * Queries and parses Podman system information formatted as JSON.
+ *
+ * @param {Function} execute Command execution runner.
+ * @returns {Promise<object|null>} Parsed JSON info object or null if Podman info command fails.
+ */
+export async function getPodmanInfo(execute) {
+  let rawJson = "";
+  const captureStream = new Writable({
+    write(chunk, _encoding, callback) {
+      rawJson += chunk.toString();
+      if (typeof callback === "function") callback();
+    }
+  });
+  try {
+    const code = await execute({ command: "podman", args: ["info", "--format", "json"] }, {
+      stdin: null,
+      stdout: captureStream,
+      stderr: null
+    });
+    if (code !== 0) return null;
+    return JSON.parse(rawJson);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Collects host, engine, configuration, and runtime health information into a sanitized diagnostic bundle.
  *
  * @param {object} params Parameter object.
@@ -2645,20 +2678,8 @@ async function supportBundleCommand({
     engine: resolvedEngine
   };
   if (resolvedEngine === "podman") {
-    let rawJson = "";
-    const captureStream = new Writable({
-      write(chunk, _encoding, callback) {
-        rawJson += chunk.toString();
-        if (typeof callback === "function") callback();
-      }
-    });
-    try {
-      await execute({ command: "podman", args: ["info", "--format", "json"] }, {
-        stdin: null,
-        stdout: captureStream,
-        stderr: null
-      });
-      const parsed = JSON.parse(rawJson);
+    const parsed = await getPodmanInfo(execute);
+    if (parsed) {
       const controllers = parsed?.host?.cgroupControllers;
       const limitsDelegated = cgroupLimitsDelegated(controllers, platform);
       engineFacts = {
@@ -2669,7 +2690,7 @@ async function supportBundleCommand({
         cgroupControllers: parsed?.host?.cgroupControllers ?? null,
         limitsDelegated
       };
-    } catch {
+    } else {
       engineFacts = {
         engine: "podman",
         status: "unavailable"
@@ -3065,23 +3086,7 @@ async function doctor({
 
     let podmanInfo = null;
     if (podmanService.code === 0) {
-      let rawJson = "";
-      const captureStream = new Writable({
-        write(chunk, _encoding, callback) {
-          rawJson += chunk.toString();
-          if (typeof callback === "function") callback();
-        }
-      });
-      try {
-        await execute({ command: "podman", args: ["info", "--format", "json"] }, {
-          stdin: null,
-          stdout: captureStream,
-          stderr: null
-        });
-        podmanInfo = JSON.parse(rawJson);
-      } catch {
-        podmanInfo = null;
-      }
+      podmanInfo = await getPodmanInfo(execute);
     }
 
     if (podmanInfo) {

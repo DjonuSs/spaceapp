@@ -186,7 +186,7 @@ test("engine switching on existing install is refused with migration instruction
       accessMode: "isolated",
       engine: "podman"
     }),
-    /Cannot switch container engine from "docker" to "podman" on an existing installation\. Docker volumes are not visible to Podman\. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine podman", and run "spaceapp restore"\./
+    /Cannot switch container engine from "docker" to "podman" on an existing installation\. Docker and Podman volumes are not interchangeable\. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine podman", and run "spaceapp restore"\./
   );
 
   const loaded = await loadConfig(root);
@@ -751,6 +751,62 @@ test("recovery and restore commands use podman executable when engine is podman"
 
   const checkpointSpec = composeCommand("checkpointDump", root, { profile: "small", engine: "podman" });
   assert.equal(checkpointSpec.command, "podman");
+});
+
+test("repair rejects rootful Podman before storage verification or runtime mutation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-repair-rootful-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["repair"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("yes"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("--format") && spec.args?.includes("json")) {
+        io.stdout.write(JSON.stringify({
+          host: {
+            security: { rootless: false }
+          }
+        }));
+      }
+      return 0;
+    }
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.value(), /Rootless Podman is required/);
+});
+
+test("reinstall with bare --engine prints usage and exits with code 1", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-reinstall-bare-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  await saveConfig(root, config);
+  const stderr = capture();
+
+  const code = await run(["reinstall", "--engine"], {
+    env: { SPACEAPP_HOME: root },
+    stderr: stderr.stream
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.value(), /Usage: spaceapp reinstall \[--engine docker\|podman\]/);
 });
 
 
