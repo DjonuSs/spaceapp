@@ -124,7 +124,7 @@ const CONFIG_KEYS = new Set([
   "companionsEnabled",
   "optionalModules",
   "installId",
-  "engine"
+  "engine",
   "users"
 ]);
 
@@ -695,13 +695,6 @@ export function renderRuntimeEnv(config) {
 }
 
 /**
- * Renders the compose override YAML file for external workspace bind mounts.
- * Applies the SELinux "z" shared label when running on Podman.
- *
- * @param {object} config SpaceApp configuration object.
- * @returns {string} Compose YAML defining workspace bind mounts.
- */
-export function renderWorkspaceCompose(config) {
  * Codex sandboxes each command with bubblewrap, which needs unprivileged user namespaces (pilot finding F17). Docker
  * Desktop's VM allows them; on Linux the host decides, and Ubuntu 23.10 and later restrict them through AppArmor.
  * shortcut: a Linux host running Docker Desktop is judged by the host's own settings; upgrade if such installs appear.
@@ -718,6 +711,15 @@ export async function userNamespacesUsable(platform = process.platform, read = (
 // mounts). Only where the sandbox can run: elsewhere it would widen the container for nothing.
 const CLI_SANDBOX_OPTIONS = ["    security_opt:", "      - seccomp=./seccomp-cli.json", "      - apparmor=unconfined"];
 
+/**
+ * Renders the compose override YAML file for external workspace bind mounts.
+ * Applies the SELinux "z" shared label when running on Podman.
+ *
+ * @param {object} config SpaceApp configuration object.
+ * @param {object} [options]
+ * @param {boolean} [options.cliSandbox]
+ * @returns {string} Compose YAML defining workspace bind mounts.
+ */
 export function renderWorkspaceCompose(config, { cliSandbox = false } = {}) {
   validateConfig(config);
   const isPodman = config.engine === "podman";
@@ -744,7 +746,11 @@ export function renderWorkspaceCompose(config, { cliSandbox = false } = {}) {
     "      - type: bind",
     `        source: ${JSON.stringify(workspace.hostPath)}`,
     `        target: ${JSON.stringify(workspace.containerPath)}`,
-    `        read_only: ${workspace.readOnly}`
+    `        read_only: ${workspace.readOnly}`,
+    ...(isPodman ? [
+      "        bind:",
+      "          selinux: z"
+    ] : [])
   ];
   const userServices = users.flatMap((user) => {
     const slug = userSlug(user.id);
@@ -796,12 +802,6 @@ export function renderWorkspaceCompose(config, { cliSandbox = false } = {}) {
   ].join("\n");
 }
 
-/**
- * Renders host root filesystem bind mount compose override YAML when host-root access mode is enabled.
- *
- * @param {object} config SpaceApp configuration object.
- * @returns {string} Compose YAML content.
- */
 /** The core's map of each user to the pane host socket of their container (SPACE_CLI_HOST_SOCKETS_FILE). */
 export function renderCliHosts(config) {
   validateConfig(config);
@@ -809,6 +809,12 @@ export function renderCliHosts(config) {
     [user.id, `/run/spaceapp-cli-users/${userSlug(user.id)}/host.sock`])), null, 2)}\n`;
 }
 
+/**
+ * Renders host root filesystem bind mount compose override YAML when host-root access mode is enabled.
+ *
+ * @param {object} config SpaceApp configuration object.
+ * @returns {string} Compose YAML content.
+ */
 export function renderHostAccessCompose(config) {
   validateConfig(config);
   if (config.accessMode === "isolated") {

@@ -664,8 +664,7 @@ export async function run(argv, {
   }
   if (command === "backup") {
     assertNoArgs(args, command);
-    return runtimeExecute(composeCommand("backup", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-    const backupCode = await runtimeExecute(composeCommand("backup", root, { profile: config.profile, companionsEnabled: config.companionsEnabled }), { stdin, stdout, stderr });
+    const backupCode = await runtimeExecute(composeCommand("backup", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (backupCode !== 0) return backupCode;
     await addBackupExtras({ root, config, stdin, stdout, stderr, execute: runtimeExecute })
       .catch((error) => stderr.write(`The backup was created; its workspace list and CLI settings were not added: ${error.message}\n`));
@@ -692,8 +691,7 @@ export async function run(argv, {
       { stdin, stdout, stderr }
     );
     if (restoreCode !== 0) return restoreCode;
-    return runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-    const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled }), { stdin, stdout, stderr });
+    const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (upCode !== 0) return upCode;
     await restoreBackupExtras({ root, config, backupId, stdin, stdout, stderr, execute: runtimeExecute })
       .catch((error) => stderr.write(`The data was restored; the CLI settings of the backup were not: ${error.message}\n`));
@@ -728,8 +726,7 @@ export async function run(argv, {
       return code;
     }
     if (args.length === 1 && args[0] === "--purge-data") {
-      const confirmation = await readSecret(stdin, stdout, `Type DELETE to remove ${engineLabel} volumes: `, { mask: false });
-      const confirmation = await readSecret(stdin, stdout, "Type DELETE to remove Docker volumes: ", { mask: false, answerKey: "purgeConfirm" });
+      const confirmation = await readSecret(stdin, stdout, `Type DELETE to remove ${engineLabel} volumes: `, { mask: false, answerKey: "purgeConfirm" });
       if (confirmation !== "DELETE") {
         throw new Error("Purge cancelled.");
       }
@@ -1683,10 +1680,8 @@ async function performUpdate({
   const stagedRoot = await mkdtemp(join(tmpdir(), "spaceapp-update-"));
   let checkpoint = null;
   try {
-    await commitInstallation(stagedRoot, updated);
-    const stagedCommand = (action) => composeCommand(action, root, {...updated, engine: updated.engine, stateRoot: stagedRoot});
     await commitInstallation(stagedRoot, updated, { projectRoot: root });
-    const stagedCommand = (action) => composeCommand(action, root, {...updated, stateRoot: stagedRoot});
+    const stagedCommand = (action) => composeCommand(action, root, {...updated, engine: updated.engine, stateRoot: stagedRoot});
     const pullCode = await withHeadlessDockerConfig(
       platform, stagedCommand("pull"),
       (pullSpec) => execute(pullSpec, { stdin, stdout, stderr })
@@ -2182,14 +2177,6 @@ async function loadExistingInstallation(root) {
   }
 }
 
-/**
- * Manages external directory workspace bind mounts (add, remove, list).
- *
- * @param {string[]} args Command arguments.
- * @param {object} params Options including root, config, and stdout stream.
- * @returns {Promise<number>} Process exit code (0 for success).
- */
-async function workspaceCommand(args, { root, config, stdout }) {
 /** Takes "--user <user-id>" out of the arguments (multi-user: the command acts on that user's container). */
 function takeUserOption(args) {
   const index = args.indexOf("--user");
@@ -2205,13 +2192,20 @@ function assertRegisteredUser(config, userId) {
   }
 }
 
+/**
+ * Manages external directory workspace bind mounts (add, remove, list).
+ *
+ * @param {string[]} rawArgs Command arguments.
+ * @param {object} params Options including root, config, platform, stdin, stdout, stderr, execute.
+ * @returns {Promise<number>} Process exit code (0 for success).
+ */
 async function workspaceCommand(rawArgs, { root, config, platform, stdin, stdout, stderr, execute }) {
   const { userId, args } = takeUserOption(rawArgs);
   if (userId) assertRegisteredUser(config, userId);
   const [action, identity, ...rest] = args;
   const applyWorkspaces = async (updated) => {
     // A user's mounts belong to their own container; "up" recreates only the services whose mounts changed.
-    const code = await execute(composeCommand(userId ? "up" : "syncWorkspaces", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled }), { stdin, stdout, stderr });
+    const code = await execute(composeCommand(userId ? "up" : "syncWorkspaces", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled, engine: updated.engine }), { stdin, stdout, stderr });
     if (code !== 0) stderr.write(`The change is saved, but the running services could not pick it up. Run "${UNIVERSAL_COMMAND} up".\n`);
     return code;
   };
@@ -2267,7 +2261,7 @@ async function exportArchive(archive, action, { root, config, service, stdin, st
   const out = createWriteStream(archive, { mode: 0o600 });
   await once(out, "open");
   const code = await execute(
-    composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service }),
+    composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
     { stdin, stdout: out, stderr }
   ).catch(() => 1);
   out.end();
@@ -2307,7 +2301,7 @@ async function restoreUserState({ root, config, directory, userId, stdin, stdout
     const input = await readFile(userArchive(directory, userId, kind)).catch(() => null);
     if (!input) continue;
     const code = await execute(
-      composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service }),
+      composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout, stderr, input }
     ).catch(() => 1);
     if (code === 0) restored.push(label);
@@ -2323,7 +2317,7 @@ async function restoreBackupExtras({ root, config, backupId, stdin, stdout, stde
   const archive = await readFile(join(directory, "cli-config.tar.gz")).catch(() => null);
   if (archive) {
     const code = await execute(
-      composeCommand("importCliSettings", root, { profile: config.profile, companionsEnabled: config.companionsEnabled }),
+      composeCommand("importCliSettings", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }),
       { stdin, stdout, stderr, input: archive }
     ).catch(() => 1);
     stdout.write(code === 0 ? "CLI settings (MCP servers, base URLs) restored.\n" : "The CLI settings in this backup could not be restored.\n");
@@ -2354,11 +2348,10 @@ async function restoreBackupExtras({ root, config, backupId, stdin, stdout, stde
 /**
  * Manages external AI provider credentials and API keys stored in secrets.
  *
- * @param {string[]} args Command arguments (set, remove, list).
+ * @param {string[]} rawArgs Command arguments (set, remove, list).
  * @param {object} params Options including root, config, streams, and execute runner.
  * @returns {Promise<number>} Process exit code (0 for success).
  */
-async function credentialsCommand(args, { root, config, stdin, stdout, stderr, execute }) {
 async function credentialsCommand(rawArgs, { root, config, stdin, stdout, stderr, execute }) {
   const { userId, args } = takeUserOption(rawArgs);
   if (userId) assertRegisteredUser(config, userId);
@@ -2378,8 +2371,7 @@ async function credentialsCommand(rawArgs, { root, config, stdin, stdout, stderr
     const value = await readSecret(stdin, stdout, `Enter ${provider} credential: `);
     await writeCredential(root, provider, value, { userId });
     const syncCode = await execute(
-      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }),
-      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service }),
+      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout, stderr }
     );
     if (syncCode !== 0) {
@@ -2395,8 +2387,7 @@ async function credentialsCommand(rawArgs, { root, config, stdin, stdout, stderr
     }
     const removed = await removeCredential(root, provider, { userId });
     const syncCode = await execute(
-      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }),
-      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service }),
+      composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout, stderr }
     );
     if (syncCode !== 0) {
@@ -2422,7 +2413,7 @@ async function waitForUserCli({ root, config, userId, stdin, stdout, stderr, exe
   const service = `spaceapp-cli-${userSlug(userId)}`;
   for (let attempt = 0; attempt < USER_CLI_READY_ATTEMPTS; attempt++) {
     const code = await execute(
-      composeCommand("cliHostReady", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service }),
+      composeCommand("cliHostReady", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout: null, stderr: null }
     ).catch(() => 1);
     if (code === 0) {
@@ -2441,7 +2432,7 @@ async function userCommand(args, { root, config, stdin, stdout, stderr, execute,
     await saveConfig(root, updated);
     await writeRuntimeFiles(root, updated);
     stdout.write(message);
-    const code = await execute(composeCommand("up", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled }), { stdin, stdout, stderr });
+    const code = await execute(composeCommand("up", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled, engine: updated.engine }), { stdin, stdout, stderr });
     if (code !== 0) stderr.write(`The change is saved, but the running services could not pick it up. Run "${UNIVERSAL_COMMAND} up".\n`);
     return code;
   };
@@ -2486,11 +2477,10 @@ async function userCommand(args, { root, config, stdin, stdout, stderr, execute,
 /**
  * Installs optional LLM provider binaries into the persistent provider volume.
  *
- * @param {string[]} args Command arguments including provider name.
+ * @param {string[]} rawArgs Command arguments including provider name.
  * @param {object} params Options including root, config, streams, and execute runner.
  * @returns {Promise<number>} Process exit code (0 for success).
  */
-async function providerCommand(args, { root, config, stdin, stdout, stderr, execute }) {
 async function providerCommand(rawArgs, { root, config, stdin, stdout, stderr, execute }) {
   const { userId, args } = takeUserOption(rawArgs);
   if (args.length !== 2 || args[0] !== "install") {
@@ -2503,8 +2493,7 @@ async function providerCommand(rawArgs, { root, config, stdin, stdout, stderr, e
   stdout.write(`Installing optional provider ${provider} into ${userId ? `the private provider volume of ${userId}` : "this installation's private provider volume"}.\n`);
   // Keep the existing Claude path compatible with older runtime images.
   const action=provider === "claude" ? "installClaude" : "installProvider";
-  return execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, engine: config.engine }), { stdin, stdout, stderr });
-  return execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, service }), { stdin, stdout, stderr });
+  return execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, service, engine: config.engine }), { stdin, stdout, stderr });
 }
 
 /**
