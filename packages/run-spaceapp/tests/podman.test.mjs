@@ -66,6 +66,23 @@ const mockGuestResources = Object.freeze({
   freeDiskBytes: 50 * 1024 ** 3
 });
 
+function mockPodmanInfo(execute) {
+  return async (spec, io) => {
+    if (spec.command === "podman" && spec.args?.includes("info") && spec.args?.includes("json")) {
+      io?.stdout?.write?.(JSON.stringify({
+        version: { Version: "5.1.0" },
+        host: {
+          security: { rootless: true },
+          cgroupVersion: "v2",
+          cgroupControllers: ["cpu", "memory", "pids"]
+        }
+      }));
+      return 0;
+    }
+    return execute ? execute(spec, io) : 0;
+  };
+}
+
 function readyRequest(url) {
   return Promise.resolve(new Response(JSON.stringify(
     url.endsWith("/readyz") ? { ok: true } : { setupRequired: false, expiresAt: null }
@@ -222,13 +239,13 @@ test("install with --engine podman initializes launcher configuration with engin
     inspectResources: async () => mockGuestResources,
     request: readyRequest,
     sleep: async () => {},
-    execute: async (spec, io) => {
+    execute: mockPodmanInfo(async (spec, io) => {
       calls.push(spec);
       if (spec.args?.includes("pg_dump")) {
         io.stdout.write("-- PostgreSQL database dump\nSELECT 1;\n");
       }
       return 0;
-    }
+    })
   });
 
   assert.equal(code, 0);
@@ -252,12 +269,12 @@ test("install without --engine auto-selects podman when docker is absent and pod
     inspectResources: async () => mockGuestResources,
     request: readyRequest,
     sleep: async () => {},
-    execute: async (spec, io) => {
+    execute: mockPodmanInfo(async (spec, io) => {
       calls.push(spec);
       if (spec.command === "docker") return 127;
       if (spec.command === "podman") return 0;
       return 0;
-    }
+    })
   });
 
   assert.equal(code, 0);
@@ -865,7 +882,7 @@ test("uninstall --purge-data sets volumesPurged and allows subsequent engine swi
     inspectResources: async () => mockGuestResources,
     request: readyRequest,
     sleep: async () => {},
-    execute: async () => 0
+    execute: mockPodmanInfo()
   });
 
   assert.equal(installCode, 0);
@@ -873,6 +890,105 @@ test("uninstall --purge-data sets volumesPurged and allows subsequent engine swi
   assert.equal(finalConfig.engine, "podman");
   assert.equal(finalConfig.volumesPurged, undefined);
 });
+
+test("reinstall rejects engine switch even when volumesPurged is set", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-reinstall-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["reinstall", "--engine", "podman"], {
+    env: { SPACEAPP_HOME: root },
+    stdout: stdout.stream,
+    stderr: stderr.stream
+  });
+
+  assert.equal(code, 1);
+  assert.match(
+    stderr.value(),
+    /reinstall keeps the saved engine "docker"\. Run "spaceapp install --engine podman" to switch engines\./
+  );
+});
+
+test("doctor fails when podmanService is available but getPodmanInfo returns null", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-doctor-no-info-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["doctor"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("--format") && spec.args?.includes("json")) {
+        return 1; // Podman info fails
+      }
+      return 0;
+    }
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.value(), /FAIL Podman rootless: system information unavailable or unreadable/);
+});
+
+test("failed install after volume purge does not attempt to restore previous purged engine", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-failed-purge-install-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+  const executedCommands = [];
+
+  const code = await run(["install", "--engine", "podman", "--profile", "small", "--no-open", "--non-interactive", "--answers", '{"confirm": true}'], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    request: async () => {
+      throw new Error("Simulated readiness failure");
+    },
+    sleep: async () => {},
+    execute: mockPodmanInfo(async (spec) => {
+      executedCommands.push(spec);
+      return 0;
+    })
+  });
+
+  assert.equal(code, 1);
+  // Should NOT attempt docker compose up to restore purged docker runtime
+  const dockerUp = executedCommands.find(c => c.command === "docker" && c.args?.includes("up"));
+  assert.equal(dockerUp, undefined, "Must not attempt to start old docker runtime after purge");
+  // Should run podman compose down to stop partially started podman runtime
+  const podmanDown = executedCommands.find(c => c.command === "podman" && c.args?.includes("down"));
+  assert.ok(podmanDown, "Must stop the attempted podman runtime");
+});
+
 
 
 

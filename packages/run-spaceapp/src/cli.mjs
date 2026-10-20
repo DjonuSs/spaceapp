@@ -586,9 +586,11 @@ export async function run(argv, {
         return 1;
       }
       const savedEngine = config?.engine ?? "docker";
-      if (requestedEngine !== savedEngine && config?.volumesPurged !== true) {
+      if (requestedEngine !== savedEngine) {
         stderr.write(
-          `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
+          config?.volumesPurged
+            ? `reinstall keeps the saved engine "${savedEngine}". Run "spaceapp install --engine ${requestedEngine}" to switch engines.\n`
+            : `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
         );
         return 1;
       }
@@ -991,7 +993,7 @@ async function installCommand(args, {
       } else await restoreRuntimeAfterFailedInstall({
         root,
         stagedStateRoot,
-        existingConfig,
+        existingConfig: existingConfig?.volumesPurged ? null : existingConfig,
         attemptedProfile: profile,
         companionsEnabled,
         engine,
@@ -3126,6 +3128,12 @@ async function doctor({
       if (!limitsDelegated) {
         stderr.write("Warning: CPU and memory limits cannot be applied by rootless Podman because cgroup controllers are not delegated. Configure systemd user delegation to enable container resource limits.\n");
       }
+    } else if (podmanService.code === 0) {
+      checks.push({
+        name: "Podman rootless",
+        ok: false,
+        detail: "system information unavailable or unreadable"
+      });
     }
 
     for (const check of checks) {
