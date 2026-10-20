@@ -538,7 +538,12 @@ export async function run(argv, {
 
   if (["up", "down", "status", "logs"].includes(command)) {
     assertNoArgs(args, command);
-    return runtimeExecute(composeCommand(command, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
+    const code = await runtimeExecute(composeCommand(command, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
+    if (code === 0 && command === "up" && config?.volumesPurged) {
+      delete config.volumesPurged;
+      await saveConfig(root, config);
+    }
+    return code;
   }
   if (command === "open") {
     assertNoArgs(args, "open");
@@ -700,8 +705,7 @@ export async function run(argv, {
     const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (upCode !== 0) return upCode;
     if (config?.volumesPurged) {
-      const { volumesPurged, ...rest } = config;
-      config = rest;
+      delete config.volumesPurged;
       await saveConfig(root, config);
     }
     await restoreBackupExtras({ root, config, backupId, stdin, stdout, stderr, execute: runtimeExecute })
@@ -1666,6 +1670,10 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
   }
   const cleanupCode = await removeInactiveProfileServices({root, config, execute, stdin, stdout, stderr});
   if (cleanupCode !== 0) return cleanupCode;
+  if (config?.volumesPurged) {
+    delete config.volumesPurged;
+    await saveConfig(root, config);
+  }
   stdout.write(`SpaceApp ${config.version} runtime repaired.\n`);
   return 0;
 }
@@ -2612,8 +2620,7 @@ async function reinstallCommand({
     }
   }
   if (config?.volumesPurged) {
-    const { volumesPurged, ...rest } = config;
-    config = rest;
+    delete config.volumesPurged;
     await saveConfig(root, config);
   }
   stdout.write("SpaceApp clean setup completed successfully. All data and settings preserved.\n");

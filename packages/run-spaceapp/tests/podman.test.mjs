@@ -1054,6 +1054,98 @@ test("install without --engine auto-selects podman when docker CLI is installed 
   assert.equal(code, 0);
   const saved = await loadConfig(root);
   assert.equal(saved.engine, "podman", "should auto-select podman when docker daemon is not operational");
+  assert.ok(calls.some((spec) => spec.command === "docker"), "docker must be probed first");
+  assert.ok(calls.some((spec) => spec.command === "podman"), "podman must be used after the docker probe fails");
+});
+
+test("restore clears volumesPurged after restoring data and starting runtime", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-restore-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const backupDir = join(root, "backups", "spaceapp-backup-20261020T000000000Z");
+  await mkdir(backupDir, { recursive: true });
+  await writeFile(join(backupDir, "manifest.json"), JSON.stringify({ version: "1.0.0", files: [] }));
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["restore"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("RESTORE"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async () => 0)
+  });
+
+  assert.equal(code, 0);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "restore must clear volumesPurged after containers start");
+});
+
+test("spaceapp up clears volumesPurged when starting runtime", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-up-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["up"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async () => 0)
+  });
+
+  assert.equal(code, 0);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "up must clear volumesPurged");
+});
+
+test("repairRuntime clears volumesPurged when repairing runtime", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-repair-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["repair"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    request: readyRequest,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async () => 0)
+  });
+
+  assert.equal(code, 0);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "repair must clear volumesPurged");
 });
 
 
