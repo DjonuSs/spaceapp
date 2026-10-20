@@ -660,7 +660,7 @@ async function dockerCliAndComposeAreAvailable(execute) {
  * @param {Function} execute Command execution function.
  * @returns {Promise<boolean>} True if Docker engine is operational.
  */
-async function dockerIsReady(execute) {
+export async function dockerIsReady(execute) {
   for (const spec of [
     { command: "docker", args: ["--version"] },
     { command: "docker", args: ["compose", "version"] },

@@ -904,14 +904,21 @@ test("reinstall rejects engine switch even when volumesPurged is set", async () 
 
   const stdout = capture();
   const stderr = capture();
+  const executed = [];
 
   const code = await run(["reinstall", "--engine", "podman"], {
     env: { SPACEAPP_HOME: root },
+    platform: "linux",
     stdout: stdout.stream,
-    stderr: stderr.stream
+    stderr: stderr.stream,
+    execute: async (spec) => {
+      executed.push(spec);
+      return 0;
+    }
   });
 
   assert.equal(code, 1);
+  assert.deepEqual(executed, [], "engine-switch rejection must happen before any engine command");
   assert.match(
     stderr.value(),
     /reinstall keeps the saved engine "docker"\. Run "spaceapp install --engine podman" to switch engines\./
@@ -988,6 +995,67 @@ test("failed install after volume purge does not attempt to restore previous pur
   const podmanDown = executedCommands.find(c => c.command === "podman" && c.args?.includes("down"));
   assert.ok(podmanDown, "Must stop the attempted podman runtime");
 });
+
+test("reinstall clears volumesPurged after successful clean setup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-reinstall-clear-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["reinstall"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    request: readyRequest,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async () => 0)
+  });
+
+  assert.equal(code, 0);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "reinstall must clear volumesPurged after containers start");
+});
+
+test("install without --engine auto-selects podman when docker CLI is installed but daemon is stopped", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-docker-stopped-"));
+  const calls = [];
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["install", "--profile", "small", "--no-open", "--non-interactive", "--answers", '{"confirm": true}'], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    request: readyRequest,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async (spec, io) => {
+      calls.push(spec);
+      if (spec.command === "docker") {
+        if (spec.args?.includes("--version")) return 0; // CLI installed
+        return 1; // docker info / compose fails (daemon stopped)
+      }
+      if (spec.command === "podman") return 0;
+      return 0;
+    })
+  });
+
+  assert.equal(code, 0);
+  const saved = await loadConfig(root);
+  assert.equal(saved.engine, "podman", "should auto-select podman when docker daemon is not operational");
+});
+
 
 
 

@@ -699,6 +699,11 @@ export async function run(argv, {
     if (restoreCode !== 0) return restoreCode;
     const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (upCode !== 0) return upCode;
+    if (config?.volumesPurged) {
+      const { volumesPurged, ...rest } = config;
+      config = rest;
+      await saveConfig(root, config);
+    }
     await restoreBackupExtras({ root, config, backupId, stdin, stdout, stderr, execute: runtimeExecute })
       .catch((error) => stderr.write(`The data was restored; the CLI settings of the backup were not: ${error.message}\n`));
     return 0;
@@ -1305,11 +1310,17 @@ async function planInteractiveSetup({
       } else {
         let dockerWorking = false;
         try {
-          const dockerCode = await execute(
+          dockerWorking = true;
+          for (const spec of [
             { command: "docker", args: ["--version"], timeoutMs: 15000 },
-            { stdin: null, stdout: null, stderr: null }
-          );
-          dockerWorking = dockerCode === 0;
+            { command: "docker", args: ["compose", "version"], timeoutMs: 15000 },
+            { command: "docker", args: ["info"], timeoutMs: 15000 }
+          ]) {
+            if (await execute(spec, { stdin: null, stdout: null, stderr: null }) !== 0) {
+              dockerWorking = false;
+              break;
+            }
+          }
         } catch {
           dockerWorking = false;
         }
@@ -2599,6 +2610,11 @@ async function reinstallCommand({
       stderr.write("Clean setup completed container start, but readiness check timed out.\n");
       return 1;
     }
+  }
+  if (config?.volumesPurged) {
+    const { volumesPurged, ...rest } = config;
+    config = rest;
+    await saveConfig(root, config);
   }
   stdout.write("SpaceApp clean setup completed successfully. All data and settings preserved.\n");
   return 0;
