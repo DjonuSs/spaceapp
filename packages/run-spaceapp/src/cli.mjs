@@ -586,7 +586,7 @@ export async function run(argv, {
         return 1;
       }
       const savedEngine = config?.engine ?? "docker";
-      if (requestedEngine !== savedEngine) {
+      if (requestedEngine !== savedEngine && config?.volumesPurged !== true) {
         stderr.write(
           `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".\n`
         );
@@ -740,6 +740,7 @@ export async function run(argv, {
         { stdin, stdout, stderr }
       );
       if (code === 0) {
+        await saveConfig(root, { ...config, volumesPurged: true });
         stdout.write(`SpaceApp runtime and ${engineLabel} volumes removed successfully.\n`);
         stdout.write(`Host configuration and backups remain at ${root} for manual review.\n`);
         stdout.write("The global SpaceApp CLI remains installed.\n");
@@ -871,14 +872,14 @@ async function installCommand(args, {
   stdout.write(
     `Access: ${existingConfig?.accessMode ?? "not configured"} -> ${result.config.accessMode}\n`
   );
-  stdout.write(existingConfig
+  stdout.write(existingConfig && !existingConfig.volumesPurged
     ? `Preserved existing data, workspaces, credentials, secrets, and persistent ${engineLabel} volumes.\n`
     : `Future refreshes preserve data, workspaces, credentials, secrets, and persistent ${engineLabel} volumes.\n`);
   stdout.write(
     `Selected profile: ${profile} (${formatGibibytes(resources.totalMemoryBytes)} GiB system memory detected).\n`
   );
   stdout.write(`SpaceApp installation root: ${root}\n`);
-  const operation = existingConfig ? (existingConfig.version === runtimeVersion ? "repair" : "upgrade") : "fresh";
+  const operation = existingConfig ? (existingConfig.volumesPurged ? "fresh" : existingConfig.version === runtimeVersion ? "repair" : "upgrade") : "fresh";
   if (installResourceChecks(resources, profile, { operation }).some((check) => !check.ok)) {
     const doctorCode = await doctor({
       root,
@@ -1030,7 +1031,7 @@ async function installCommand(args, {
     if (await verifyStorage({ root, config: result.config, existingConfig, operation,
       inspectResources, execute, stdout, stderr }) !== 0) return failInstall(1);
     stage = "start";
-    if(existingConfig && existingConfig.version !== result.config.version) {
+    if (existingConfig && existingConfig.version !== result.config.version && !existingConfig.volumesPurged) {
       upgradeCheckpoint = await createQuiescedCheckpoint(root, existingConfig, {stdin,stdout,stderr,execute,platform});
     }
     runtimeMutationAttempted = true;
@@ -1272,7 +1273,7 @@ async function planInteractiveSetup({
 
   if (rawExisting && requestedEngine) {
     const savedEngine = rawExisting.engine ?? "docker";
-    if (requestedEngine !== savedEngine) {
+    if (requestedEngine !== savedEngine && rawExisting.volumesPurged !== true) {
       throw new Error(
         `Cannot switch container engine from "${savedEngine}" to "${requestedEngine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${requestedEngine}", and run "spaceapp restore".`
       );
@@ -1297,7 +1298,7 @@ async function planInteractiveSetup({
 
   if (path === "fresh") {
     if (!requestedEngine) {
-      if (parsed.requestedAccessMode === "host-root" || platform !== "linux") {
+      if (parsed.requestedAccessMode === "host-root" || platform === "win32") {
         requestedEngine = "docker";
       } else {
         let dockerWorking = false;
@@ -1326,8 +1327,8 @@ async function planInteractiveSetup({
               requestedEngine = "podman";
             } else {
               requestedEngine = await promptChoice(stdin, stdout, "Which container engine?", [
-                { label: "podman (Podman rootless)", value: "podman" },
-                { label: "docker (Docker Engine / Docker Desktop)", value: "docker" }
+                { label: "docker (Docker Engine / Docker Desktop)", value: "docker" },
+                { label: "podman (Podman rootless)", value: "podman" }
               ], { defaultIndex: 0, answerKey: "engine" });
             }
           } else {
@@ -2844,6 +2845,7 @@ async function factoryResetCommand({
   } catch {}
 
   const result = await initializeInstallation(root, { version: runtimeVersion });
+  await saveConfig(root, { ...result.config, volumesPurged: true });
   stdout.write(`SpaceApp factory reset complete. Clean installation initialized at ${root}\n`);
   if (result.setupToken) {
     stdout.write(`One-time setup token: ${result.setupToken}\n`);

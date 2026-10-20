@@ -125,7 +125,8 @@ const CONFIG_KEYS = new Set([
   "optionalModules",
   "installId",
   "engine",
-  "users"
+  "users",
+  "volumesPurged"
 ]);
 
 // Multi-user (SpaceApp accounts with SPACE_MULTI_USER_ENABLED): every user's CLIs run in their own container, with
@@ -401,6 +402,9 @@ export function validateConfig(config) {
   }
   if (config.engine === "podman" && config.accessMode === "host-root") {
     throw new Error("Host-root access is not supported on Podman.");
+  }
+  if (config.volumesPurged !== undefined && typeof config.volumesPurged !== "boolean") {
+    throw new Error("volumesPurged must be boolean.");
   }
   if (config.optionalModules !== undefined && !OPTIONAL_MODULES_PATTERN.test(config.optionalModules)) {
     throw new Error("optionalModules must be all, none or a comma-separated list of module names.");
@@ -1079,7 +1083,7 @@ export async function prepareInstallation(root, {
   }
   if (existingConfig) {
     const existingEngine = existingConfig.engine ?? "docker";
-    if (engine !== undefined && engine !== existingEngine) {
+    if (engine !== undefined && engine !== existingEngine && existingConfig.volumesPurged !== true) {
       throw new Error(
         `Cannot switch container engine from "${existingEngine}" to "${engine}" on an existing installation. Docker and Podman volumes are not interchangeable. To migrate engines, run "spaceapp backup", uninstall with "spaceapp uninstall --purge-data", install with "--engine ${engine}", and run "spaceapp restore".`
       );
@@ -1104,6 +1108,10 @@ export async function prepareInstallation(root, {
   }
   if (engine !== undefined && config.engine !== engine) {
     config = { ...config, engine };
+  }
+  if (config.volumesPurged) {
+    const { volumesPurged, ...rest } = config;
+    config = rest;
   }
   validateConfig(config);
 

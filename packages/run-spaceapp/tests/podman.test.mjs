@@ -809,6 +809,71 @@ test("reinstall with bare --engine prints usage and exits with code 1", async ()
   assert.match(stderr.value(), /Usage: spaceapp reinstall \[--engine docker\|podman\]/);
 });
 
+test("engine switch is permitted after data purge marked with volumesPurged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-engine-switch-purged-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  config.volumesPurged = true;
+  await saveConfig(root, config);
+
+  const prepared = await prepareInstallation(root, {
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+
+  assert.equal(prepared.config.engine, "podman");
+  assert.equal(prepared.config.volumesPurged, undefined, "clears volumesPurged marker on install");
+});
+
+test("uninstall --purge-data sets volumesPurged and allows subsequent engine switch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-uninstall-purge-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "docker"
+  });
+  await saveConfig(root, config);
+  await writeFile(join(root, "compose.yml"), "services: {}\n");
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["uninstall", "--purge-data"], {
+    env: { SPACEAPP_HOME: root },
+    stdin: ttyStdin("DELETE"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: async () => 0
+  });
+
+  assert.equal(code, 0);
+  const purgedConfig = await loadConfig(root);
+  assert.equal(purgedConfig.volumesPurged, true);
+
+  const installCode = await run(["install", "--engine", "podman", "--profile", "small", "--no-open", "--non-interactive", "--answers", '{"confirm": true}'], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    request: readyRequest,
+    sleep: async () => {},
+    execute: async () => 0
+  });
+
+  assert.equal(installCode, 0);
+  const finalConfig = await loadConfig(root);
+  assert.equal(finalConfig.engine, "podman");
+  assert.equal(finalConfig.volumesPurged, undefined);
+});
+
 
 
 
