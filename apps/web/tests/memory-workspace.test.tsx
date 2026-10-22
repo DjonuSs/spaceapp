@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryGraphNode, MemoryGraphEdge } from "@space/contracts";
 import { layoutMemoryNetwork } from "../src/features/memory-workspace/memory-network-layout.js";
 import { createMemoryAtlas } from "../src/features/memory-workspace/memory-atlas.js";
@@ -10,6 +11,7 @@ const node = (id: string, type: MemoryGraphNode["type"] = "MEMORY"): MemoryGraph
 const edge = (id: string, source: string, target: string, type: MemoryGraphEdge["type"] = "TAGGED_WITH"): MemoryGraphEdge => ({ id, source, target, type, origin: "EXPLICIT_TAG" });
 
 describe("Memory atlas data integrity", () => {
+  afterEach(cleanup);
   it("preserves source files, memories, isolates and real provenance links", () => {
     const nodes = [node("a"), node("b"), node("isolated"), node("tag", "TOPIC"), node("file", "SOURCE")];
     const edges = [edge("at", "a", "tag"), edge("bt", "b", "tag"), edge("source", "file", "a", "CONTAINS")];
