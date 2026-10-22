@@ -294,6 +294,8 @@ describe("3D memory projection", () => {
     expect(metrics.drawStats.renderedEdges).toBe(150_000 * 12);
     expect(metrics.p50Ms).toBeGreaterThan(0);
     expect(metrics.p95Ms).toBeGreaterThan(0);
+    // Issue #62 acceptance criteria: p95 frame time <= 33 ms on 50k nodes / 150k edges
+    expect(metrics.p95Ms).toBeLessThanOrEqual(33.0);
   });
 
   it("executes the WebGL2 frame-time harness at 2,000 nodes / 6,000 edges and records p50 and p95", () => {
@@ -306,6 +308,8 @@ describe("3D memory projection", () => {
     expect(metrics.drawStats.edgeDraws).toBe(12);
     expect(metrics.p50Ms).toBeGreaterThan(0);
     expect(metrics.p95Ms).toBeGreaterThan(0);
+    // Issue #62 acceptance criteria: p95 frame time <= 16.7 ms on 2,000 nodes / 6,000 edges
+    expect(metrics.p95Ms).toBeLessThanOrEqual(16.7);
   });
 });
 

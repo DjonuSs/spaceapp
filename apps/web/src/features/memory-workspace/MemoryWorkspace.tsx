@@ -132,6 +132,7 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
     const loadedLimit = loadedLimitRef.current;
     if (queryMatches && loadedLimit === targetLimit) {
       setLoading(false);
+      setError(null);
       return;
     }
     const cached = overviewCacheRef.current.get(targetLimit);
@@ -139,6 +140,7 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
       loadedLimitRef.current = targetLimit;
       setGraph(cached);
       setLoading(false);
+      setError(null);
       return;
     }
     let active = true;
