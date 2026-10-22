@@ -388,7 +388,7 @@ export function registerMemoryGraphRoutes(
 ): void {
   app.get("/api/admin/memory/graph/overview", async (request, reply) => {
     requireMemoryGraph(options.config);
-    if (request.user?.role !== "ADMIN" && request.user?.role !== "OPERATOR") {
+    if (request.user?.role !== "ADMIN") {
       return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Memory graph overview requires administrator access." } });
     }
     const query = listMemoryGraphOverviewQuerySchema.parse(request.query);

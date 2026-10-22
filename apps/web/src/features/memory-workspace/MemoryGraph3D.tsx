@@ -683,7 +683,10 @@ export function MemoryGraph3D({
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(render);
     };
-    redrawRef.current = schedule;
+    redrawRef.current = () => {
+      spatialDirty = true;
+      schedule();
+    };
     syncSceneRef.current = (topologyChanged: boolean) => {
       syncSceneBuffers(topologyChanged);
       schedule();

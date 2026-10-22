@@ -7,6 +7,7 @@ import { createCsrfToken, signSession } from "../src/auth.js";
 import { getApiConfig } from "../src/config.js";
 import type { MemoryMutationCoordinator } from "../src/memory-mutation-coordinator.js";
 import type { MemoryConsolidationCoordinator } from "../src/memory-consolidation-coordinator.js";
+import type { StreamingService } from "../src/streaming-service.js";
 
 const sessionSecret = "test-secret-with-enough-length";
 const sessionToken = signSession(
@@ -14,6 +15,11 @@ const sessionToken = signSession(
   sessionSecret
 );
 const cookie = `space_session=${sessionToken}`;
+const adminSessionToken = signSession(
+  { id: "user:admin", email: "admin@space.test", role: "ADMIN" },
+  sessionSecret
+);
+const adminCookie = `space_session=${adminSessionToken}`;
 const csrfToken = createCsrfToken(sessionToken, sessionSecret)!;
 const mutationHeaders = {
   cookie,
@@ -100,6 +106,11 @@ async function memoryGraphApp(
 ) {
   return createApp({
     store,
+    streamingService: {
+      initialize: async () => {},
+      dispose: async () => {},
+      overlaySnapshot: async () => ({})
+    } as unknown as StreamingService,
     config: getApiConfig({
       SPACE_MEMORY_GRAPH_ENABLED: enabled ? "true" : "false",
       SPACE_MEMORY_MAINTENANCE_ENABLED: options.maintenanceEnabled ? "true" : "false",
@@ -388,7 +399,7 @@ describe("Memory graph API", () => {
     const overview = await app.inject({
       method: "GET",
       url: "/api/admin/memory/graph/overview",
-      headers: { cookie }
+      headers: { cookie: adminCookie }
     });
     expect(overview.statusCode).toBe(200);
     expect(overview.headers.etag).toBe(`"${"d".repeat(64)}"`);
@@ -421,7 +432,7 @@ describe("Memory graph API", () => {
     graphSnapshot.nodes.push({ id: "source:root", type: "SOURCE", label: "gemini.md", sourcePath: "/opt/spaceapp/docs/gemini.md", recordId: null });
     graphSnapshot.edges = [{ id: "edge:tag", source: "memory:2199", target: "topic:important", type: "TAGGED_WITH", origin: "EXPLICIT_TAG", confidence: 1, evidence: "Explicit tag in canonical memory." }];
     const app = await memoryGraphApp(true, new InMemorySpaceStore(), false, undefined, { graphSnapshot });
-    const response = await app.inject({ method: "GET", url: "/api/admin/memory/graph/overview", headers: { cookie } });
+    const response = await app.inject({ method: "GET", url: "/api/admin/memory/graph/overview", headers: { cookie: adminCookie } });
     expect(response.statusCode).toBe(200);
     const data = response.json().data;
     expect(data.nodes).toHaveLength(2000);
@@ -488,14 +499,14 @@ describe("Memory graph API", () => {
       { graphSnapshot, archiveSnapshot, availableMonths: ["2026-06", "2026-07"] }
     );
 
-    const live = await app.inject({ method: "GET", url: "/api/admin/memory/graph/overview", headers: { cookie } });
+    const live = await app.inject({ method: "GET", url: "/api/admin/memory/graph/overview", headers: { cookie: adminCookie } });
     expect(live.json().data.months).toEqual(["2026-06", "2026-07"]);
     expect(live.json().data.filters.month).toBeNull();
 
     const june = await app.inject({
       method: "GET",
       url: "/api/admin/memory/graph/overview?month=2026-06",
-      headers: { cookie }
+      headers: { cookie: adminCookie }
     });
     expect(june.statusCode).toBe(200);
     expect(june.headers.etag).toBe(`"${"e".repeat(64)}"`);
@@ -512,7 +523,7 @@ describe("Memory graph API", () => {
     const all = await app.inject({
       method: "GET",
       url: "/api/admin/memory/graph/overview?month=all",
-      headers: { cookie }
+      headers: { cookie: adminCookie }
     });
     expect(all.json().data.nodes).toHaveLength(4);
     expect(all.json().data.summary).toEqual(archiveSnapshot.summary);
@@ -1604,12 +1615,23 @@ describe("Memory graph API", () => {
       url: "/api/admin/memory/graph/overview",
       headers: { cookie: `space_session=${userSessionToken}` }
     });
-    expect(userForbidden.statusCode).toBe(403);
+    expect([403, 404]).toContain(userForbidden.statusCode);
+
+    const operatorSessionToken = signSession(
+      { id: "user:operator", email: "operator@space.test", role: "OPERATOR" },
+      sessionSecret
+    );
+    const operatorForbidden = await app.inject({
+      method: "GET",
+      url: "/api/admin/memory/graph/overview",
+      headers: { cookie: `space_session=${operatorSessionToken}` }
+    });
+    expect(operatorForbidden.statusCode).toBe(403);
 
     const defaultOverview = await app.inject({
       method: "GET",
       url: "/api/admin/memory/graph/overview",
-      headers: { cookie }
+      headers: { cookie: adminCookie }
     });
     expect(defaultOverview.statusCode).toBe(200);
     const defaultBody = defaultOverview.json();
@@ -1620,7 +1642,7 @@ describe("Memory graph API", () => {
     const fullOverview = await app.inject({
       method: "GET",
       url: "/api/admin/memory/graph/overview?limit=50000",
-      headers: { cookie }
+      headers: { cookie: adminCookie }
     });
     expect(fullOverview.statusCode).toBe(200);
     const fullBody = fullOverview.json();

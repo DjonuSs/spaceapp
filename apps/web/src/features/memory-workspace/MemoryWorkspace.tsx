@@ -71,6 +71,18 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
   const detailRequest = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const loadedLimitRef = useRef<number | undefined>(undefined);
+  const prevView3DRef = useRef(view3D);
+  const [transitionSelectedId, setTransitionSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prevView3DRef.current && !view3D) {
+      setTransitionSelectedId(selectedNodeId);
+    } else if (view3D && transitionSelectedId !== null) {
+      setTransitionSelectedId(null);
+    }
+    prevView3DRef.current = view3D;
+  }, [view3D, selectedNodeId, transitionSelectedId]);
+
   const closeDetail = useCallback(() => {
     detailRequest.current++;
     setSelectedNodeId(null);
@@ -231,8 +243,8 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
   }, [atlas]);
 
   const graph2D = useMemo(
-    () => selectMemory3DFallbackNodes(atlas.nodes, atlas.edges, null, 2000),
-    [atlas.nodes, atlas.edges]
+    () => selectMemory3DFallbackNodes(atlas.nodes, atlas.edges, transitionSelectedId, 2000),
+    [atlas.nodes, atlas.edges, transitionSelectedId]
   );
 
   const displayGroups = useMemo(() => atlas.groups.filter(group => group.kind !== "tag" || group.count >= 10), [atlas.groups]);

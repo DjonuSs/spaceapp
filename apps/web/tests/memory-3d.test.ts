@@ -268,28 +268,28 @@ describe("3D memory projection", () => {
     expect(detail.record?.title).toBe(sampleMemoryNode.label);
   });
 
-  it("executes the frame-time benchmark harness on 50k nodes with p95 under 16.6 ms", () => {
-    const metrics = runMemory3DPerformanceHarness(12);
+  it("executes the CPU projection and focus-update benchmark harness on 50k nodes with p95 under 16.6 ms", () => {
+    const metrics = runMemory3DProjectionHarness(12);
     expect(metrics.nodeCount).toBe(50_000);
     expect(metrics.edgeCount).toBe(150_000);
     expect(metrics.sampleCount).toBe(12);
     expect(metrics.p50Ms).toBeGreaterThan(0);
     expect(metrics.p95Ms).toBeGreaterThan(0);
     if (process.env.MEMORY_BENCH) {
-      const fullMetrics = runMemory3DPerformanceHarness(120);
+      const fullMetrics = runMemory3DProjectionHarness(120);
       expect(fullMetrics.p95Ms).toBeLessThan(16.6);
     }
   });
 });
 
 /**
- * Frame-time benchmark harness measuring p50, p95, and average render frame times
+ * Benchmark harness measuring p50, p95, and average CPU projection and focus-update times
  * across simulated frames with 50,000 nodes and 150,000 edges.
  *
  * @param sampleCount Number of frames to sample (defaults to 120).
  * @returns Benchmark metrics summary including p50, p95, and average ms.
  */
-export function runMemory3DPerformanceHarness(sampleCount = 120): {
+export function runMemory3DProjectionHarness(sampleCount = 120): {
   nodeCount: number;
   edgeCount: number;
   sampleCount: number;
@@ -334,18 +334,6 @@ export function runMemory3DPerformanceHarness(sampleCount = 120): {
   const p50Ms = Math.round((sorted[Math.floor(sorted.length * 0.5)] ?? 0) * 100) / 100;
   const p95Ms = Math.round((sorted[Math.floor(sorted.length * 0.95)] ?? 0) * 100) / 100;
   const avgMs = Math.round((frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length) * 100) / 100;
-
-  if (typeof window !== "undefined") {
-    (window as unknown as { __SPACE_MEMORY_3D_METRICS__?: unknown }).__SPACE_MEMORY_3D_METRICS__ = {
-      renderer: "webgl2",
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      lastFrameMs: frameTimes[frameTimes.length - 1] ?? 0,
-      p50Ms,
-      p95Ms,
-      sampleCount: frameTimes.length
-    };
-  }
 
   return {
     nodeCount: nodes.length,

@@ -162,7 +162,7 @@ export function generateSyntheticMemoryGraph(
     4,
     Math.min(150_000, requestedEdgeCount !== undefined ? Math.floor(requestedEdgeCount) : nodeCount * 3)
   );
-  const sourceCount = Math.max(4, Math.min(120, Math.ceil(nodeCount / 400)));
+  const sourceCount = Math.max(4, Math.min(24, Math.ceil(nodeCount / 400)));
   const maxTopics = Math.max(1, Math.min(200, Math.floor((nodeCount - sourceCount) / 15)));
   const topicCount = Math.max(1, Math.min(maxTopics, Math.ceil(nodeCount / 250)));
   const structuralCount = Math.min(nodeCount - 1, sourceCount + topicCount);
@@ -885,7 +885,12 @@ export class DemoStore {
             (!query.nodeType || node.type === query.nodeType) &&
             (!query.sourcePath || node.sourcePath === query.sourcePath) &&
             (!query.scope || (record ? record.scope === query.scope : query.scope === "ROOM")) &&
-            (!query.roomId || (record ? record.roomId === query.roomId : true)) &&
+            (!query.roomId ||
+              (record
+                ? record.roomId === query.roomId
+                : this.syntheticGraph
+                  ? node.type === "MEMORY" && query.roomId === "room:demo-launch"
+                  : true)) &&
             (!query.lifecycleStatus || (record ? record.lifecycleStatus === query.lifecycleStatus : query.lifecycleStatus === "ACTIVE")) &&
             (!expectedMonthPrefix || fileName.startsWith(expectedMonthPrefix));
         });
