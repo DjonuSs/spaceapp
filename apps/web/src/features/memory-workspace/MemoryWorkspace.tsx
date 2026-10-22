@@ -71,8 +71,13 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
   const detailRequest = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const loadedLimitRef = useRef<number | undefined>(undefined);
+  const overviewCacheRef = useRef<Map<number, MemoryGraphOverviewResponse>>(new Map());
   const prevView3DRef = useRef(view3D);
   const [transitionSelectedId, setTransitionSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    overviewCacheRef.current.clear();
+  }, [query]);
 
   useEffect(() => {
     if (prevView3DRef.current && !view3D) {
@@ -117,19 +122,21 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
   const requestedLimit = useMemo(() => {
     const urlLimit = readRequestedOverviewLimit();
     if (urlLimit !== undefined) return urlLimit;
-    return view3D ? 50_000 : undefined;
+    return view3D ? 50_000 : 2_000;
   }, [view3D]);
 
   useEffect(() => {
     if (workspaceMode !== "atlas") return;
-    // When switching to 2D, skip re-fetching if a graph exists for the same query (even if truncated).
-    // When switching to 3D, skip re-fetching only if the graph is not truncated.
+    const targetLimit = requestedLimit;
     const queryMatches = graph !== null && (graph.data.filters.q ?? "") === query;
     const loadedLimit = loadedLimitRef.current;
-    if (
-      queryMatches &&
-      (requestedLimit === undefined || !graph.data.truncated || (loadedLimit !== undefined && loadedLimit >= requestedLimit))
-    ) {
+    if (queryMatches && loadedLimit === targetLimit) {
+      return;
+    }
+    const cached = overviewCacheRef.current.get(targetLimit);
+    if (queryMatches && cached) {
+      loadedLimitRef.current = targetLimit;
+      setGraph(cached);
       return;
     }
     let active = true;
@@ -141,18 +148,19 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
       q: query || undefined,
       month: "all",
       relationMode: "RELATIONS",
-      ...(requestedLimit !== undefined ? { limit: requestedLimit } : {})
+      limit: targetLimit
     })
       .then(payload => {
         if (active) {
-          loadedLimitRef.current = requestedLimit ?? 2000;
+          overviewCacheRef.current.set(targetLimit, payload);
+          loadedLimitRef.current = targetLimit;
           setGraph(payload);
         }
       })
       .catch(caught => { if (active) setError(caught instanceof Error ? caught.message : "Memory could not be loaded."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [workspaceMode, query, requestedLimit, closeDetail]);
+  }, [workspaceMode, query, requestedLimit, closeDetail, graph]);
 
   useEffect(() => () => { detailRequest.current++; }, []);
   const selectNode = useCallback((nodeId: string) => {
@@ -247,6 +255,17 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
     [atlas.nodes, atlas.edges, transitionSelectedId]
   );
 
+  const graph2DPositions = useMemo(() => {
+    const nodeIds = new Set(graph2D.nodes.map(node => node.id));
+    const filtered = new Map<string, MemoryAtlasPosition>();
+    for (const [id, pos] of atlasPositions) {
+      if (nodeIds.has(id)) {
+        filtered.set(id, pos);
+      }
+    }
+    return filtered;
+  }, [atlasPositions, graph2D.nodes]);
+
   const displayGroups = useMemo(() => atlas.groups.filter(group => group.kind !== "tag" || group.count >= 10), [atlas.groups]);
   return (
     <section id="memory-atlas" className="memory-workspace memory-atlas" aria-label="Memory workspace" data-shell-mode={shellMode} data-workspace-mode={workspaceMode} data-view-mode={view3D ? "3D" : "2D"} data-titles-visible={showTitles} data-atlas-layout="network" data-layout-ready={Boolean(layout?.atlas === atlas && layout.done)} data-layout-root-x={atlasPositions.get(atlasMetrics.rootId)?.x} data-atlas-group-count={displayGroups.length} data-atlas-color-count={new Set(displayGroups.map(group => group.color)).size}>
@@ -324,7 +343,7 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
             <div className="memory-graph-layout" data-detail-open={Boolean(selectedNodeId)} data-graph-mode="ATLAS" data-source-count={atlasMetrics.sourceCount} data-source-link-count={atlasMetrics.sourceLinkCount} data-root-visible={atlasMetrics.rootVisible} data-raw-node-count={graph?.data.nodes.length ?? 0} data-visible-node-count={atlas.nodes.length} data-visible-edge-count={atlas.edges.length}>
               <div className="memory-atlas-2d" hidden={view3D}><MemoryGraphErrorBoundary>
                 <Suspense fallback={<div className="memory-graph-loading" role="status">Connecting your memories…</div>}>
-                  <DesktopMemoryGraph nodes={graph2D.nodes} edges={graph2D.edges} displayMode="SEMANTIC" relationMode="RELATIONS" selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layout2DPending} error={error} totalNodes={graph?.data.totalMatchingNodes ?? 0} totalEdges={graph?.data.totalMatchingEdges ?? 0} truncated={(graph?.data.truncated ?? false) || graph2D.nodes.length < atlas.nodes.length} atlasPositions={atlasPositions} showTitles={showTitles} />
+                  <DesktopMemoryGraph nodes={graph2D.nodes} edges={graph2D.edges} displayMode="SEMANTIC" relationMode="RELATIONS" selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layout2DPending} error={error} totalNodes={graph?.data.totalMatchingNodes ?? 0} totalEdges={graph?.data.totalMatchingEdges ?? 0} truncated={(graph?.data.truncated ?? false) || graph2D.nodes.length < atlas.nodes.length} atlasPositions={graph2DPositions} showTitles={showTitles} />
                 </Suspense>
               </MemoryGraphErrorBoundary></div>
               {view3D ? <MemoryGraph3D nodes={atlas.nodes} edges={atlas.edges} positions={atlasPositions} coordinates={layout?.atlas === atlas ? layout.depth : EMPTY_COORDINATES} packedCoordinates={layout?.atlas === atlas ? layout.coords3d : null} showTitles={showTitles} selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layoutPending} resetToken={reset3D} /> : null}
