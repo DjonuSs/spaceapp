@@ -131,12 +131,14 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
     const queryMatches = graph !== null && (graph.data.filters.q ?? "") === query;
     const loadedLimit = loadedLimitRef.current;
     if (queryMatches && loadedLimit === targetLimit) {
+      setLoading(false);
       return;
     }
     const cached = overviewCacheRef.current.get(targetLimit);
     if (queryMatches && cached) {
       loadedLimitRef.current = targetLimit;
       setGraph(cached);
+      setLoading(false);
       return;
     }
     let active = true;
@@ -214,9 +216,9 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
       }
     };
     worker.onerror = event => { setError(`Memory layout could not be calculated: ${event.message || "worker unavailable"}`); worker.terminate(); };
-    worker.postMessage({ nodes: atlas.nodes, edges: atlas.edges });
+    worker.postMessage({ nodes: atlas.nodes, edges: atlas.edges, selectedNodeId: transitionSelectedId });
     return () => worker.terminate();
-  }, [workspaceMode, atlas]);
+  }, [workspaceMode, atlas, transitionSelectedId]);
 
   const hasInitialLayoutFrame = layout?.atlas === atlas;
   const layoutPending = typeof Worker !== "undefined" && atlas.nodes.length > 0 && !hasInitialLayoutFrame;
@@ -263,8 +265,12 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
         filtered.set(id, pos);
       }
     }
+    if (transitionSelectedId && nodeIds.has(transitionSelectedId) && !filtered.has(transitionSelectedId)) {
+      const basePos = atlas.positions.get(transitionSelectedId);
+      if (basePos) filtered.set(transitionSelectedId, basePos);
+    }
     return filtered;
-  }, [atlasPositions, graph2D.nodes]);
+  }, [atlasPositions, graph2D.nodes, transitionSelectedId, atlas.positions]);
 
   const displayGroups = useMemo(() => atlas.groups.filter(group => group.kind !== "tag" || group.count >= 10), [atlas.groups]);
   return (

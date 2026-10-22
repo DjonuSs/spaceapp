@@ -25,10 +25,11 @@ let activeJobId = 0;
 function compute2DPositions(
   nodes: MemoryGraphNode[],
   edges: MemoryGraphEdge[],
-  isLarge: boolean
+  isLarge: boolean,
+  selectedNodeId: string | null = null
 ): Array<[string, { x: number; y: number }]> {
   if (isLarge) {
-    const fallback = selectMemory3DFallbackNodes(nodes, edges, null, 2000);
+    const fallback = selectMemory3DFallbackNodes(nodes, edges, selectedNodeId, 2000);
     return [...layoutMemoryNetwork(fallback.nodes, fallback.edges)];
   }
   return [...layoutMemoryNetwork(nodes, edges)];
@@ -45,13 +46,13 @@ function postWorkerMessage(message: MemoryNetworkLayoutWorkerMessage, transfer: 
     .postMessage(message, transfer);
 }
 
-self.onmessage = (event: MessageEvent<{ nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[] }>) => {
+self.onmessage = (event: MessageEvent<{ nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[]; selectedNodeId?: string | null }>) => {
   if (activeTimer !== null) {
     clearTimeout(activeTimer);
     activeTimer = null;
   }
   const jobId = ++activeJobId;
-  const { nodes, edges } = event.data;
+  const { nodes, edges, selectedNodeId = null } = event.data;
   const count = nodes.length;
   const isLarge = count > 2000;
   const sim3D = createMemoryNetwork3DSimulation(nodes, edges);
@@ -62,7 +63,7 @@ self.onmessage = (event: MessageEvent<{ nodes: MemoryGraphNode[]; edges: MemoryG
   const firstCoords = sim3D.packCoordinates();
 
   if (initialDone) {
-    const positions = compute2DPositions(nodes, edges, isLarge);
+    const positions = compute2DPositions(nodes, edges, isLarge, selectedNodeId);
     const depth = isLarge ? undefined : [...sim3D.toMap()];
     postWorkerMessage(
       {
@@ -108,7 +109,7 @@ self.onmessage = (event: MessageEvent<{ nodes: MemoryGraphNode[]; edges: MemoryG
     }
 
     activeTimer = null;
-    const positions = compute2DPositions(nodes, edges, isLarge);
+    const positions = compute2DPositions(nodes, edges, isLarge, selectedNodeId);
     const depth = isLarge ? undefined : [...sim3D.toMap()];
     postWorkerMessage(
       {
