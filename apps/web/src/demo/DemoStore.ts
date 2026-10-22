@@ -894,16 +894,29 @@ export class DemoStore {
             (!query.lifecycleStatus || (record ? record.lifecycleStatus === query.lifecycleStatus : query.lifecycleStatus === "ACTIVE")) &&
             (!expectedMonthPrefix || fileName.startsWith(expectedMonthPrefix));
         });
+    let matchingNodes = nodes;
+    if (hasFilter && query.relationMode !== "CLUSTERED" && nodes.length < base.nodes.length) {
+      const anchorIds = new Set(nodes.map((node) => node.id));
+      const relatedIds = new Set<string>();
+      for (const edge of base.edges) {
+        if (anchorIds.has(edge.source)) relatedIds.add(edge.target);
+        else if (anchorIds.has(edge.target)) relatedIds.add(edge.source);
+      }
+      if (relatedIds.size > 0) {
+        const relatedNodes = base.nodes.filter((node) => !anchorIds.has(node.id) && relatedIds.has(node.id));
+        matchingNodes = [...nodes, ...relatedNodes];
+      }
+    }
     let edges = base.edges;
     let sourceCount = base.summary.sourceCount;
     let recordCount = base.summary.recordCount;
     let issueCount = base.summary.issueCount;
     if (hasFilter) {
-      const nodeIds = new Set(nodes.map((node) => node.id));
+      const nodeIds = new Set(matchingNodes.map((node) => node.id));
       edges = base.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
       const sources = new Set<string>();
       recordCount = 0;
-      for (const node of nodes) {
+      for (const node of matchingNodes) {
         if (node.sourcePath) sources.add(node.sourcePath);
         if (node.recordId) recordCount += 1;
       }
@@ -915,11 +928,11 @@ export class DemoStore {
       summary: {
         sourceCount,
         recordCount,
-        nodeCount: nodes.length,
+        nodeCount: matchingNodes.length,
         edgeCount: edges.length,
         issueCount
       },
-      nodes,
+      nodes: matchingNodes,
       edges,
       filters: {
         q: query.q ?? null,

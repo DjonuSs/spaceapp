@@ -299,11 +299,18 @@ export function runMemory3DProjectionHarness(sampleCount = 120): {
 } {
   const { nodes, edges } = generateSyntheticMemoryGraph(50_000, 150_000);
   const atlas = createMemoryAtlas(nodes, edges);
+  const coordinates = new Map<string, MemoryPoint3D>();
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i]!;
+    const pos = atlas.positions.get(node.id) ?? { x: 0, y: 0 };
+    coordinates.set(node.id, { x: pos.x, y: pos.y, z: ((i * 31) % 400) - 200 });
+  }
+
   const buffers = buildMemory3DWebGLBuffers({
     nodes,
     edges,
     positions: atlas.positions,
-    coordinates: new Map()
+    coordinates
   });
 
   const frameTimes: number[] = [];
@@ -315,7 +322,7 @@ export function runMemory3DProjectionHarness(sampleCount = 120): {
     const t0 = performance.now();
     buildMemory3DSpatialIndex({
       nodes,
-      coordinates: new Map(),
+      coordinates,
       packedCoordinates: null,
       camera,
       scale: 1.0,
