@@ -441,9 +441,30 @@ export function registerMemoryGraphRoutes(
         nonStructuralEdges.push(edge);
       }
     }
-    const selectedEdges = structuralEdges.length >= edgeLimit
-      ? structuralEdges.slice(0, edgeLimit)
-      : [...structuralEdges, ...nonStructuralEdges.slice(0, edgeLimit - structuralEdges.length)];
+    const selectedNodeById = new Map(selectedNodes.map((node) => [node.id, node]));
+    const connectorTopics = new Set<string>();
+    const topicConnectorEdges: MemoryGraphEdge[] = [];
+    for (const edge of nonStructuralEdges) {
+      if (
+        edge.type !== "TAGGED_WITH" ||
+        selectedNodeById.get(edge.source)?.type !== "MEMORY" ||
+        selectedNodeById.get(edge.target)?.type !== "TOPIC" ||
+        connectorTopics.has(edge.target)
+      ) continue;
+      connectorTopics.add(edge.target);
+      topicConnectorEdges.push(edge);
+    }
+    const connectorBudget = Math.min(edgeLimit, topicConnectorEdges.length);
+    const structuralBudget = Math.min(structuralEdges.length, edgeLimit - connectorBudget);
+    const remainingEdgeBudget = edgeLimit - structuralBudget - connectorBudget;
+    const topicConnectorSet = new Set(topicConnectorEdges);
+    const selectedEdges = [
+      ...structuralEdges.slice(0, structuralBudget),
+      ...topicConnectorEdges.slice(0, connectorBudget),
+      ...nonStructuralEdges
+        .filter((edge) => !topicConnectorSet.has(edge))
+        .slice(0, remainingEdgeBudget)
+    ];
     const data = memoryGraphOverviewPayloadSchema.parse({
       version: snapshot.version,
       layoutVersion: snapshot.layoutVersion,
