@@ -245,7 +245,7 @@ describe("MemoryCalendarView", () => {
     await act(async () => {});
     expect(api.memoryGraphOverview).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: /^Atlas$/ }));
-    await waitFor(() => expect(api.memoryGraphOverview).toHaveBeenLastCalledWith({ q: "release", month: "all", relationMode: "RELATIONS" }));
+    await waitFor(() => expect(api.memoryGraphOverview).toHaveBeenLastCalledWith({ q: "release", month: "all", relationMode: "RELATIONS", limit: expect.any(Number) }));
 
   });
 });

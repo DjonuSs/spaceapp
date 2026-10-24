@@ -254,8 +254,6 @@ export function createMemoryAtlas(nodes: MemoryGraphNode[], edges: MemoryGraphEd
       color: string;
       count: number;
       info: Pick<MemoryAtlasGroup, "label" | "kind">;
-      defaultPos: MemoryAtlasPosition;
-      monthPos: Map<string, MemoryAtlasPosition>;
     }
     const groupMeta = new Map<string, GroupMetaEntry>();
     let groupIndex = 0;
@@ -267,9 +265,7 @@ export function createMemoryAtlas(nodes: MemoryGraphNode[], edges: MemoryGraphEd
         id: groupId,
         color,
         count: 0,
-        info,
-        defaultPos: { x: 0, y: 0, color, hub: false, groupId },
-        monthPos: new Map()
+        info
       });
     }
     const nodeMetas = new Array<GroupMetaEntry>(vLen);
@@ -286,16 +282,11 @@ export function createMemoryAtlas(nodes: MemoryGraphNode[], edges: MemoryGraphEd
       const month = cachedMonths[i];
       const isCore = !isMemory && isMemoryCoreLabel(node.label);
       if (!rel && !hub && !isCore) {
-        if (!month) {
-          positions.set(node.id, meta.defaultPos);
-        } else {
-          let entry = meta.monthPos.get(month);
-          if (!entry) {
-            entry = { x: 0, y: 0, color: meta.color, hub: false, groupId: meta.id, monthLabel: memoryMonthLabel(month) };
-            meta.monthPos.set(month, entry);
-          }
-          positions.set(node.id, entry);
-        }
+        const posX = i % 40;
+        const posY = Math.floor(i / 40);
+        positions.set(node.id, month
+          ? { x: posX, y: posY, color: meta.color, hub: false, groupId: meta.id, monthLabel: memoryMonthLabel(month) }
+          : { x: posX, y: posY, color: meta.color, hub: false, groupId: meta.id });
         continue;
       }
       const posX = rel ? rel.x : i % 40;

@@ -190,8 +190,10 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
 
   useEffect(() => {
     if (workspaceMode !== "atlas" || !atlas.nodes.length || typeof Worker === "undefined") return;
+    let disposed = false;
     const worker = new Worker(new URL("./memory-network-layout.worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<MemoryNetworkLayoutWorkerMessage>) => {
+      if (disposed) return;
       const { positions, depth, coords3d, done } = event.data;
       const isDone = done !== false;
       setLayout(prev => {
@@ -217,9 +219,16 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
         worker.terminate();
       }
     };
-    worker.onerror = event => { setError(`Memory layout could not be calculated: ${event.message || "worker unavailable"}`); worker.terminate(); };
+    worker.onerror = event => {
+      if (disposed) return;
+      setError(`Memory layout could not be calculated: ${event.message || "worker unavailable"}`);
+      worker.terminate();
+    };
     worker.postMessage({ nodes: atlas.nodes, edges: atlas.edges, selectedNodeId: transitionSelectedId });
-    return () => worker.terminate();
+    return () => {
+      disposed = true;
+      worker.terminate();
+    };
   }, [workspaceMode, atlas, transitionSelectedId]);
 
   const hasInitialLayoutFrame = layout?.atlas === atlas;
