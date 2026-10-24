@@ -34,7 +34,7 @@ const HTML_PAYLOAD = `<!DOCTYPE html>
       }
 
       const debugInfo = gl.getExtension("WEBGL_debug_renderer_info");
-      const gpuRenderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : "WebGL2";
+      const gpuRenderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : "unknown";
 
       const VS_NODE = \`#version 300 es
       precision highp float;
@@ -354,6 +354,9 @@ async function main() {
   if (!match) throw new Error("Benchmark produced no result");
   const result = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
   if (result.error) throw new Error(result.error);
+  if (!result.gpu || result.gpu === "unknown") {
+    throw new Error("GPU renderer could not be identified; results cannot be verified as GPU measurements");
+  }
   if (/swiftshader|software|llvmpipe/i.test(result.gpu)) {
     throw new Error(`Software renderer detected (${result.gpu}); results are not valid GPU measurements`);
   }
