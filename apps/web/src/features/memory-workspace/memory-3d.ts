@@ -838,8 +838,9 @@ export function buildMemory3DWebGLBuffers(input: {
       instancePositions[posBase + 2] = packedCoordinates![posBase + 2]!;
     } else {
       const p = coordinates.get(node.id);
-      instancePositions[posBase] = p?.x ?? 0;
-      instancePositions[posBase + 1] = p?.y ?? 0;
+      const fallback = positions.get(node.id);
+      instancePositions[posBase] = p?.x ?? fallback?.x ?? 0;
+      instancePositions[posBase + 1] = p?.y ?? fallback?.y ?? 0;
       instancePositions[posBase + 2] = p?.z ?? 0;
     }
 

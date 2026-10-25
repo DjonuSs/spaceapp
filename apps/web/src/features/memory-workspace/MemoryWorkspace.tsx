@@ -221,12 +221,19 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
     };
     worker.onerror = event => {
       if (disposed) return;
-      setLayout({
-        atlas,
-        positions: atlas.positions,
-        depth: EMPTY_COORDINATES,
-        coords3d: null,
-        done: true
+      setLayout(prev => {
+        const fallbackDepth = prev?.atlas === atlas && prev.depth.size > 0
+          ? prev.depth
+          : new Map<string, MemoryPoint3D>(
+              [...atlas.positions].map(([id, pos]) => [id, { x: pos.x, y: pos.y, z: 0 }])
+            );
+        return {
+          atlas,
+          positions: prev?.atlas === atlas ? prev.positions : atlas.positions,
+          depth: fallbackDepth,
+          coords3d: prev?.atlas === atlas ? prev.coords3d : null,
+          done: true
+        };
       });
       setError(`Memory layout could not be calculated: ${event.message || "worker unavailable"}`);
       worker.terminate();
