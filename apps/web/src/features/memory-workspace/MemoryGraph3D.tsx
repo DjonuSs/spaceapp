@@ -220,6 +220,7 @@ export function MemoryGraph3D({
   selectedNodeId,
   onSelectNode,
   loading,
+  error,
   resetToken
 }: {
   nodes: MemoryGraphNode[];
@@ -231,6 +232,7 @@ export function MemoryGraph3D({
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
   loading: boolean;
+  error?: string | null;
   resetToken: number;
 }) {
   const volumeRatio = useMemo(
@@ -907,6 +909,11 @@ export function MemoryGraph3D({
         aria-hidden="true"
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
       />
+      {error ? (
+        <div className="memory-3d-error-state" role="alert" style={{ position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 5, background: "#201216ee", border: "1px solid #852020", borderRadius: "16px", padding: "6px 14px", color: "#ff8c8c", fontSize: "11px", pointerEvents: "none" }}>
+          <p style={{ margin: 0 }}>{error}</p>
+        </div>
+      ) : null}
       <span className="memory-3d-hint">Drag to rotate 360° · Scroll or pinch to zoom · Click to explore</span>
     </div>
   );

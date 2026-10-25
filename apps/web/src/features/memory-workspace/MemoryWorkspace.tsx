@@ -221,6 +221,13 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
     };
     worker.onerror = event => {
       if (disposed) return;
+      setLayout({
+        atlas,
+        positions: atlas.positions,
+        depth: EMPTY_COORDINATES,
+        coords3d: null,
+        done: true
+      });
       setError(`Memory layout could not be calculated: ${event.message || "worker unavailable"}`);
       worker.terminate();
     };
@@ -363,7 +370,7 @@ export function MemoryWorkspace({ shellMode, onClose, initialMode = "calendar" }
                   <DesktopMemoryGraph nodes={graph2D.nodes} edges={graph2D.edges} displayMode="SEMANTIC" relationMode="RELATIONS" selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layout2DPending} error={error} totalNodes={graph?.data.totalMatchingNodes ?? 0} totalEdges={graph?.data.totalMatchingEdges ?? 0} truncated={(graph?.data.truncated ?? false) || graph2D.nodes.length < atlas.nodes.length} atlasPositions={graph2DPositions} showTitles={showTitles} />
                 </Suspense>
               </MemoryGraphErrorBoundary></div>
-              {view3D ? <MemoryGraph3D nodes={atlas.nodes} edges={atlas.edges} positions={atlasPositions} coordinates={layout?.atlas === atlas ? layout.depth : EMPTY_COORDINATES} packedCoordinates={layout?.atlas === atlas ? layout.coords3d : null} showTitles={showTitles} selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layoutPending} resetToken={reset3D} /> : null}
+              {view3D ? <MemoryGraph3D nodes={atlas.nodes} edges={atlas.edges} positions={atlasPositions} coordinates={layout?.atlas === atlas ? layout.depth : EMPTY_COORDINATES} packedCoordinates={layout?.atlas === atlas ? layout.coords3d : null} showTitles={showTitles} selectedNodeId={selectedNodeId} onSelectNode={selectNode} loading={loading || layoutPending} error={error} resetToken={reset3D} /> : null}
             </div>
             {!selectedNodeId && displayGroups.length > 0 ? <aside className="memory-atlas-topics" aria-label="Map topics">
               <span className="memory-atlas-eyebrow">COLOR GUIDE</span>
