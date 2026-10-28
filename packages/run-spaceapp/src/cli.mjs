@@ -2910,7 +2910,7 @@ async function factoryResetCommand({
     await rm(join(root, "compose.yml"), { force: true });
   } catch {}
 
-  const result = await initializeInstallation(root, { version: runtimeVersion });
+  const result = await initializeInstallation(root, { version: runtimeVersion, engine: config?.engine });
   await saveConfig(root, { ...result.config, volumesPurged: true });
   stdout.write(`SpaceApp factory reset complete. Clean installation initialized at ${root}\n`);
   if (result.setupToken) {

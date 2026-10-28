@@ -1148,6 +1148,41 @@ test("repairRuntime clears volumesPurged when repairing runtime", async () => {
   assert.equal(reloaded.volumesPurged, undefined, "repair must clear volumesPurged");
 });
 
+test("factory-reset preserves podman engine in reinitialized configuration with volumesPurged marker", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-factory-reset-podman-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["factory-reset"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("FACTORY-RESET"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec, io) => {
+      if (spec.args?.includes("pg_dump")) {
+        io.stdout.write("-- PostgreSQL database dump\nSELECT 1;\n");
+        return 0;
+      }
+      return 0;
+    })
+  });
+
+  assert.equal(code, 0);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.engine, "podman", "factory-reset must preserve podman engine");
+  assert.equal(reloaded.volumesPurged, true, "factory-reset must set volumesPurged marker");
+});
+
+
 
 
 
