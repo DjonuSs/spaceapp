@@ -50,6 +50,15 @@ describe("OTLP span export configuration", () => {
     expect(otlpSpanExporterFromEnv({}, "space-api")).toBeNull();
     expect(otlpSpanExporterFromEnv({ SPACE_OTEL_EXPORTER_OTLP_ENDPOINT: "javascript:alert(1)" }, "space-api")).toBeNull();
   });
+
+  it("rejects non-positive and non-finite batchSize values", () => {
+    expect(() => createOtlpSpanExporter({ endpoint: "http://127.0.0.1:4318/", serviceName: "space-api", batchSize: 0 }))
+      .toThrow("batchSize must be a positive finite number.");
+    expect(() => createOtlpSpanExporter({ endpoint: "http://127.0.0.1:4318/", serviceName: "space-api", batchSize: -1 }))
+      .toThrow("batchSize must be a positive finite number.");
+    expect(() => createOtlpSpanExporter({ endpoint: "http://127.0.0.1:4318/", serviceName: "space-api", batchSize: Number.NaN }))
+      .toThrow("batchSize must be a positive finite number.");
+  });
 });
 
 describe("OTLP span exporter", () => {

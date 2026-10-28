@@ -224,7 +224,11 @@ export function createOtlpSpanExporter(options: OtlpSpanExporterOptions): SpanEx
   const url = otlpTracesUrl(options.endpoint);
   if (!url) throw new Error("Invalid OTLP endpoint.");
   const send: FetchLike = options.fetch ?? ((target, init) => fetch(target, init));
-  const batchSize = options.batchSize ?? 256;
+  const configuredBatchSize = options.batchSize ?? 256;
+  if (!Number.isFinite(configuredBatchSize) || configuredBatchSize <= 0) {
+    throw new Error("batchSize must be a positive finite number.");
+  }
+  const batchSize = Math.max(1, Math.floor(configuredBatchSize));
   const maxQueue = options.maxQueue ?? 4096;
   const timeoutMs = options.timeoutMs ?? 3000;
   const queue: ServerSpan[] = [];
