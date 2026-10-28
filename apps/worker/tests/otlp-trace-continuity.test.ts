@@ -1013,18 +1013,24 @@ describe("End-to-end OTLP trace continuity across API, workflows, child workflow
         }
       });
 
-      const headers: Record<string, unknown> = {};
-      encodeSpaceTraceHeader(headers, {
-        traceId,
-        traceparent
+      const { Client } = await import("@temporalio/client");
+      const client = new Client({
+        connection: env.connection,
+        interceptors: {
+          workflow: [{
+            startWithDetails: async (input, next) => {
+              encodeSpaceTraceHeader(input.headers, { traceId, traceparent });
+              return next(input);
+            }
+          }]
+        }
       });
 
       await worker.runUntil(async () => {
-        const handle = await env.client.workflow.start("dummyTurnWorkflow", {
+        const handle = await client.workflow.start("dummyTurnWorkflow", {
           taskQueue: "otlp-integration-queue",
           workflowId: "test-integration-workflow-1",
-          args: [{ providerId: "opencode", prompt: "hello", traceparent }],
-          headers
+          args: [{ providerId: "opencode", prompt: "hello" }]
         });
         const res = await handle.result();
         expect(res.response).toBe("done");
