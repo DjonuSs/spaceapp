@@ -39,6 +39,7 @@ import {
   resolveInstallProfile,
   resolveSpaceAppHome,
   saveConfig,
+  readRecordedDigests,
   selectLatestBackupId,
   SPACEAPP_UPGRADE_POLICY,
   upgradePath,
@@ -70,6 +71,10 @@ import {
   installFunnelFacts,
   isInstallPingAllowed
 } from "./telemetry.mjs";
+import { PACKAGE_IMAGE_LOCK } from "./image-lock.mjs";
+import { IMAGE_VERIFY_OFF_WARNING, imageVerificationOff } from "./image-attestations.mjs";
+// scripts/portable-restore.mjs (in the core image) exits with this code when a restore changed nothing or put everything back.
+export const RESTORE_UNCHANGED_EXIT = 3;
 
 const APPLICATION_READY_WAIT_MINUTES = 10;
 const APPLICATION_READY_WAIT_MS = APPLICATION_READY_WAIT_MINUTES * 60 * 1_000;
@@ -441,6 +446,7 @@ export async function run(argv, {
 
   const [command = "help", ...args] = filteredArgv;
   const root = resolveSpaceAppHome({ env, platform });
+  if (imageVerificationOff(env)) stderr.write(IMAGE_VERIFY_OFF_WARNING);
 
   if (["help", "--help", "-h"].includes(command) || args.includes("--help") || args.includes("-h")) {
     stdout.write(helpText());
@@ -642,9 +648,14 @@ export async function run(argv, {
     if (!config.previousVersion) {
       throw new Error("No previous SpaceApp version is recorded.");
     }
+    // Pinned when this installation recorded the previous version's digests; otherwise said before the owner agrees.
+    const pinned = PACKAGE_IMAGE_LOCK?.runtimeVersion === config.previousVersion || Boolean((await readRecordedDigests(root))[config.previousVersion]);
     const approved = await requireChangeApproval(stdin, stdout, stderr, [
       `Runtime image version: ${config.version} -> ${config.previousVersion}`,
-      "Rollback restores the previously recorded runtime images and configuration."
+      "Rollback restores the previously recorded runtime images and configuration.",
+      pinned
+        ? `The ${config.previousVersion} images are pulled by the digests recorded when it was installed.`
+        : `No digests were recorded for ${config.previousVersion} (installed before digest pinning): its images are pulled by version tag.`
     ]);
     if (!approved) {
       return 0;
@@ -698,11 +709,24 @@ export async function run(argv, {
     if (backupCode !== 0) return backupCode;
     const stopCode = await runtimeExecute(composeCommand("stopForPortableRestore", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (stopCode !== 0) return stopCode;
+    // The backup just made holds the data from before the restore.
+    const safetyBackupId = await selectLatestBackupId(root).catch(() => "the newest backup");
     const restoreCode = await runtimeExecute(
       composeCommand("restore", root, { backupId, profile: config.profile, engine: config.engine }),
       { stdin, stdout, stderr }
     );
-    if (restoreCode !== 0) return restoreCode;
+    if (restoreCode !== 0) {
+      // Exit 3: the restore changed nothing or put every database and file back, so SpaceApp starts again as it was (1.1.8).
+      if (restoreCode === RESTORE_UNCHANGED_EXIT) {
+        const againCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
+        stderr.write(againCode === 0
+          ? `The restore of ${backupId} did not happen; SpaceApp runs again with its data from before the restore (also kept in the backup ${safetyBackupId}).\n`
+          : `The restore of ${backupId} did not happen and SpaceApp could not be started again; run "${UNIVERSAL_COMMAND} up". Its data from before the restore is kept in the backup ${safetyBackupId}.\n`);
+        return restoreCode;
+      }
+      stderr.write(`The restore of ${backupId} failed and SpaceApp stays stopped: the messages above say what is left at the backup's state. To start SpaceApp anyway, run "${UNIVERSAL_COMMAND} up"; to try again, run "${UNIVERSAL_COMMAND} restore". The data from before the restore is kept in the backup ${safetyBackupId}.\n`);
+      return restoreCode;
+    }
     const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
     if (upCode !== 0) return upCode;
     if (config?.volumesPurged) {
