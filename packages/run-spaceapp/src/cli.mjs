@@ -545,7 +545,7 @@ export async function run(argv, {
   if (["up", "down", "status", "logs"].includes(command)) {
     assertNoArgs(args, command);
     const code = await runtimeExecute(composeCommand(command, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-    if (code === 0 && command === "up" && config?.volumesPurged) {
+    if (command === "up" && config?.volumesPurged) {
       delete config.volumesPurged;
       await saveConfig(root, config);
     }
@@ -719,6 +719,10 @@ export async function run(argv, {
       // Exit 3: the restore changed nothing or put every database and file back, so SpaceApp starts again as it was (1.1.8).
       if (restoreCode === RESTORE_UNCHANGED_EXIT) {
         const againCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
+        if (againCode === 0 && config?.volumesPurged) {
+          delete config.volumesPurged;
+          await saveConfig(root, config);
+        }
         stderr.write(againCode === 0
           ? `The restore of ${backupId} did not happen; SpaceApp runs again with its data from before the restore (also kept in the backup ${safetyBackupId}).\n`
           : `The restore of ${backupId} did not happen and SpaceApp could not be started again; run "${UNIVERSAL_COMMAND} up". Its data from before the restore is kept in the backup ${safetyBackupId}.\n`);
@@ -1678,6 +1682,10 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
   if (upCode !== 0) {
     return upCode;
   }
+  if (config?.volumesPurged) {
+    delete config.volumesPurged;
+    await saveConfig(root, config);
+  }
   if (typeof request === "function") {
     const url = `http://${config.bindHost}:${config.port}`;
     const ready = await waitForReadiness({
@@ -1695,10 +1703,6 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
   }
   const cleanupCode = await removeInactiveProfileServices({root, config, execute, stdin, stdout, stderr});
   if (cleanupCode !== 0) return cleanupCode;
-  if (config?.volumesPurged) {
-    delete config.volumesPurged;
-    await saveConfig(root, config);
-  }
   stdout.write(`SpaceApp ${config.version} runtime repaired.\n`);
   return 0;
 }
@@ -2648,6 +2652,10 @@ async function reinstallCommand({
     stderr.write(`Clean setup failed during container startup (exit ${upCode}).\n`);
     return upCode;
   }
+  if (config?.volumesPurged) {
+    delete config.volumesPurged;
+    await saveConfig(root, config);
+  }
   if (typeof request === "function") {
     const url = `http://${config.bindHost}:${config.port}`;
     const ready = await waitForReadiness({
@@ -2662,10 +2670,6 @@ async function reinstallCommand({
       stderr.write("Clean setup completed container start, but readiness check timed out.\n");
       return 1;
     }
-  }
-  if (config?.volumesPurged) {
-    delete config.volumesPurged;
-    await saveConfig(root, config);
   }
   stdout.write("SpaceApp clean setup completed successfully. All data and settings preserved.\n");
   return 0;
@@ -3158,11 +3162,13 @@ async function doctor({
     }
 
     if (podmanInfo) {
-      const version = podmanInfo?.version?.Version ?? podmanInfo?.Version?.Version ?? "unknown";
+      const version = podmanInfo?.version?.Version ?? podmanInfo?.Version?.Version;
+      const versionMatch = String(version ?? "").match(/^(\d+)(?:\.|$)/);
+      const majorVersion = versionMatch ? Number(versionMatch[1]) : NaN;
       checks.push({
         name: "Podman version",
-        ok: true,
-        detail: version
+        ok: Number.isInteger(majorVersion) && majorVersion >= 5,
+        detail: version ?? "unknown"
       });
 
       const isRootless = Boolean(podmanInfo?.host?.security?.rootless);

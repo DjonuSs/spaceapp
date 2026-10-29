@@ -1182,6 +1182,101 @@ test("factory-reset preserves podman engine in reinitialized configuration with 
   assert.equal(reloaded.volumesPurged, true, "factory-reset must set volumesPurged marker");
 });
 
+test("doctor fails when Podman version is below major version 5", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-podman-v4-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, config);
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["doctor"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("--format") && spec.args?.includes("json")) {
+        io.stdout.write(JSON.stringify({
+          version: { Version: "4.9.4" },
+          host: {
+            security: { rootless: true },
+            cgroupVersion: "v2",
+            cgroupControllers: ["cpu", "memory", "pids"]
+          }
+        }));
+      }
+      return 0;
+    }
+  });
+
+  assert.equal(code, 1);
+  assert.match(stderr.value(), /FAIL Podman version: 4\.9\.4/);
+});
+
+test("spaceapp up clears volumesPurged even when up command returns failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-up-fail-purge-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, { ...config, volumesPurged: true });
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["up"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: async () => 1
+  });
+
+  assert.equal(code, 1);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "up must clear volumesPurged on attempted startup");
+});
+
+test("repairRuntime clears volumesPurged immediately after compose up succeeds before readiness check", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-repair-readiness-fail-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, { ...config, volumesPurged: true });
+
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["repair"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async () => 0),
+    request: async () => ({ status: 503 })
+  });
+
+  assert.equal(code, 1);
+  const reloaded = await loadConfig(root);
+  assert.equal(reloaded.volumesPurged, undefined, "repairRuntime must clear volumesPurged immediately after up succeeds");
+});
+
+
 
 
 
