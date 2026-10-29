@@ -1679,12 +1679,12 @@ async function repairRuntime({ root, config, platform, stdin, stdout, stderr, ex
     composeCommand("repair", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }),
     { stdin, stdout, stderr }
   );
-  if (upCode !== 0) {
-    return upCode;
-  }
-  if (config?.volumesPurged) {
+  if (upCode !== 127 && config?.volumesPurged) {
     delete config.volumesPurged;
     await saveConfig(root, config);
+  }
+  if (upCode !== 0) {
+    return upCode;
   }
   if (typeof request === "function") {
     const url = `http://${config.bindHost}:${config.port}`;
@@ -2648,13 +2648,13 @@ async function reinstallCommand({
     composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }),
     { stdin, stdout, stderr }
   );
+  if (upCode !== 127 && config?.volumesPurged) {
+    delete config.volumesPurged;
+    await saveConfig(root, config);
+  }
   if (upCode !== 0) {
     stderr.write(`Clean setup failed during container startup (exit ${upCode}).\n`);
     return upCode;
-  }
-  if (config?.volumesPurged) {
-    delete config.volumesPurged;
-    await saveConfig(root, config);
   }
   if (typeof request === "function") {
     const url = `http://${config.bindHost}:${config.port}`;

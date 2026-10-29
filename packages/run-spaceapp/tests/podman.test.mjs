@@ -1276,6 +1276,71 @@ test("repairRuntime clears volumesPurged immediately after compose up succeeds b
   assert.equal(reloaded.volumesPurged, undefined, "repairRuntime must clear volumesPurged immediately after up succeeds");
 });
 
+test("repairRuntime and reinstallCommand clear volumesPurged on failed compose up but preserve it on pre-startup failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-repair-up-fail-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+  await saveConfig(root, { ...config, volumesPurged: true });
+
+  const stdout = capture();
+  const stderr = capture();
+
+  // 1. Pre-startup pull failure preserves volumesPurged
+  const pullFailCode = await run(["repair"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("pull")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(pullFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, true, "pre-startup pull failure must preserve volumesPurged");
+
+  // 2. Nonzero compose up during repair clears volumesPurged
+  const upFailCode = await run(["repair"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    inspectResources: async () => mockGuestResources,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(upFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, undefined, "failed repair compose up must clear volumesPurged");
+
+  // 3. Nonzero compose up during reinstall clears volumesPurged
+  await saveConfig(root, { ...config, volumesPurged: true });
+  const reinstallFailCode = await run(["reinstall"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdin: ttyStdin("y"),
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    sleep: async () => {},
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(reinstallFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, undefined, "failed reinstall compose up must clear volumesPurged");
+});
+
 
 
 
