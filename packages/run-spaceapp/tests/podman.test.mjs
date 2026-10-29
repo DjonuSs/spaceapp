@@ -1491,6 +1491,65 @@ test("macOS install with auto profile down-selects to viable Podman Machine prof
   assert.match(stdout.value(), /Podman resources select profile: small\./);
 });
 
+test("checkMacPodmanMachine selects running named machine from list and emits backend-aware named resize guidance", async () => {
+  // 1. Selects running named machine ("dev-vm") over stopped default machine
+  const inspectedArgs = [];
+  const stdout1 = capture();
+  const stderr1 = capture();
+  const res1 = await checkMacPodmanMachine({
+    profile: "small",
+    stdout: stdout1.stream,
+    stderr: stderr1.stream,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("list")) {
+        io.stdout.write(JSON.stringify([
+          { Name: "podman-machine-default", Running: false, Default: true, CPUs: 1, Memory: "1GiB", DiskSize: "10GiB" },
+          { Name: "dev-vm*", Running: true, Default: false, VMType: "qemu" }
+        ]));
+        return 0;
+      }
+      if (spec.args?.includes("inspect")) {
+        inspectedArgs.push(spec.args);
+        io.stdout.write(JSON.stringify([{
+          Name: "dev-vm",
+          Resources: { CPUs: 2, Memory: 2048, DiskSize: 15 }
+        }]));
+        return 0;
+      }
+      return 0;
+    }
+  });
+  assert.equal(res1.ok, false);
+  assert.deepEqual(inspectedArgs, [["machine", "inspect", "dev-vm"]]);
+  assert.match(stderr1.value(), /podman machine stop dev-vm/);
+  assert.match(stderr1.value(), /podman machine set --cpus 4 --memory 3072 --disk-size 20 dev-vm/);
+  assert.match(stderr1.value(), /podman machine start dev-vm/);
+
+  // 2. Non-QEMU provider ("applehv") advises replacement with podman machine init after backup confirmation, without podman machine set or unconditional rm
+  const stdout2 = capture();
+  const stderr2 = capture();
+  const res2 = await checkMacPodmanMachine({
+    profile: "small",
+    stdout: stdout2.stream,
+    stderr: stderr2.stream,
+    execute: async (spec, io) => {
+      if (spec.args?.includes("list")) {
+        io.stdout.write(JSON.stringify([
+          { Name: "mac-hv", Running: true, VMType: "applehv", CPUs: 2, Memory: "2GiB", DiskSize: "15GiB" }
+        ]));
+        return 0;
+      }
+      return 1;
+    }
+  });
+  assert.equal(res2.ok, false);
+  assert.match(stderr2.value(), /does not support in-place resizing with "podman machine set"/);
+  assert.match(stderr2.value(), /Back up any required data from "mac-hv" and confirm the destructive replacement/);
+  assert.match(stderr2.value(), /podman machine init --cpus 4 --memory 3072 --disk-size 20 mac-hv/);
+  assert.doesNotMatch(stderr2.value(), /podman machine rm/);
+});
+
+
 
 
 

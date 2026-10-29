@@ -740,43 +740,58 @@ export function podmanInstallHelp(platform) {
  * @returns {Promise<{ ok: boolean, code: number }>} Result object indicating success or failure.
  */
 export async function checkMacPodmanMachine({ execute, profile = "small", autoProfile = false, stderr, stdout }) {
-  let output = "";
-  const captureStream = new Writable({
-    write(chunk, _encoding, done) {
-      if (output.length < 1024 * 1024) output += chunk.toString();
-      done();
-    }
-  });
-  let code = await execute(
-    { command: "podman", args: ["machine", "inspect"] },
-    { stdout: captureStream, stderr: null }
-  );
-  if (code !== 0 || !output.trim()) {
-    output = "";
-    const listStream = new Writable({
+  const captureCommand = async (args) => {
+    let out = "";
+    const stream = new Writable({
       write(chunk, _encoding, done) {
-        if (output.length < 1024 * 1024) output += chunk.toString();
+        if (out.length < 1024 * 1024) out += chunk.toString();
         done();
       }
     });
-    code = await execute(
-      { command: "podman", args: ["machine", "list", "--format", "json"] },
-      { stdout: listStream, stderr: null }
+    const exitCode = await execute(
+      { command: "podman", args },
+      { stdout: stream, stderr: null }
     );
-    if (code !== 0 || !output.trim()) {
-      stderr?.write("SpaceApp could not inspect Podman machine. Ensure a Podman machine is running (\"podman machine start\").\n");
-      return { ok: false, code: 1 };
+    return { code: exitCode, output: out.trim() };
+  };
+
+  const parseMachineEntry = (raw) => {
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return (
+          parsed.find((m) => m?.Running === true || m?.running === true || String(m?.LastUp ?? "").toLowerCase() === "currently running") ??
+          parsed.find((m) => m?.Default === true || m?.default === true) ??
+          parsed[0] ??
+          null
+        );
+      }
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return undefined;
     }
-  }
-  let machine = null;
-  try {
-    const parsed = JSON.parse(output);
-    machine = Array.isArray(parsed)
-      ? (parsed.find((m) => m.Running || m.running || m.Default || m.default) ?? parsed[0])
-      : parsed;
-  } catch {
+  };
+
+  const listResult = await captureCommand(["machine", "list", "--format", "json"]);
+  const listedMachine = listResult.code === 0 ? parseMachineEntry(listResult.output) : null;
+  if (listedMachine === undefined) {
     return { ok: true, code: 0 };
   }
+  const listedName = String(listedMachine?.Name ?? listedMachine?.name ?? "").replace(/\*$/, "").trim();
+  const inspectArgs = listedName ? ["machine", "inspect", listedName] : ["machine", "inspect"];
+  const inspectResult = await captureCommand(inspectArgs);
+  if ((listResult.code !== 0 || !listResult.output) && (inspectResult.code !== 0 || !inspectResult.output)) {
+    stderr?.write("SpaceApp could not inspect Podman machine. Ensure a Podman machine is running (\"podman machine start\").\n");
+    return { ok: false, code: 1 };
+  }
+  const inspectedMachine = inspectResult.code === 0 ? parseMachineEntry(inspectResult.output) : null;
+  if (inspectedMachine === undefined) {
+    return { ok: true, code: 0 };
+  }
+  const machine = listedMachine && inspectedMachine
+    ? { ...listedMachine, ...inspectedMachine }
+    : (inspectedMachine ?? listedMachine);
   if (!machine) {
     stderr?.write("No active Podman machine found. Run \"podman machine init && podman machine start\".\n");
     return { ok: false, code: 1 };
@@ -839,14 +854,30 @@ export async function checkMacPodmanMachine({ execute, profile = "small", autoPr
   const diskOk = diskBytes === 0 || diskBytes >= req.freshDiskBytes;
   if (!cpusOk || !memOk || !diskOk) {
     const gib = (bytes) => (bytes / 1024 ** 3).toFixed(1);
+    const machineName = String(machine.Name ?? machine.name ?? "podman-machine-default").replace(/\*$/, "").trim() || "podman-machine-default";
+    const vmType = String(machine.VMType ?? machine.vmType ?? machine.Provider ?? machine.provider ?? "").trim().toLowerCase();
+    const reqMemMib = Math.ceil(minMem / (1024 ** 2));
+    const reqDiskGib = Math.max(20, Math.ceil(req.freshDiskBytes / (1024 ** 3)));
+    const resizeGuidance = vmType && vmType !== "qemu"
+      ? `The "${vmType}" Podman machine provider does not support in-place resizing with "podman machine set".\n` +
+        `Back up any required data from "${machineName}" and confirm the destructive replacement before removing the existing machine, then create and start a replacement machine with:\n` +
+        `  podman machine stop ${machineName}\n` +
+        `  podman machine init --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
+        `  podman machine start ${machineName}\n`
+      : "To resize your QEMU Podman machine, run:\n" +
+        `  podman machine stop ${machineName}\n` +
+        `  podman machine set --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
+        `  podman machine start ${machineName}\n` +
+        (vmType === "qemu"
+          ? ""
+          : `For non-QEMU macOS providers (such as applehv or libkrun), resizing requires creating a replacement machine. Back up any required data and confirm the destructive replacement before removing "${machineName}", then run:\n` +
+            `  podman machine init --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
+            `  podman machine start ${machineName}\n`);
     stderr?.write(
       `The Podman machine does not have sufficient resources for the "${profile}" profile.\n` +
       `Required: ${req.cpuCount} CPUs, ${gib(minMem)} GiB memory, ${gib(req.freshDiskBytes)} GiB disk.\n` +
       `Available: ${cpus} CPUs, ${gib(memBytes)} GiB memory, ${gib(diskBytes)} GiB disk.\n\n` +
-      "To resize your Podman machine, run:\n" +
-      "  podman machine stop\n" +
-      `  podman machine set --cpus ${req.cpuCount} --memory ${Math.ceil(minMem / (1024 ** 2))} --disk-size ${Math.max(20, Math.ceil(req.freshDiskBytes / (1024 ** 3)))}\n` +
-      "  podman machine start\n"
+      resizeGuidance
     );
     return { ok: false, code: 1 };
   }
