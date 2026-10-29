@@ -1341,6 +1341,105 @@ test("repairRuntime and reinstallCommand clear volumesPurged on failed compose u
   assert.equal((await loadConfig(root)).volumesPurged, undefined, "failed reinstall compose up must clear volumesPurged");
 });
 
+test("backup, workspace sync, and user lifecycle clear volumesPurged when compose runs and preserve it on exit 127", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-compose-clear-purged-"));
+  const workspaceDir = await mkdtemp(join(tmpdir(), "spaceapp-ws-dir-"));
+  const config = createDefaultConfig({
+    version: "1.0.0",
+    profile: "small",
+    accessMode: "isolated",
+    engine: "podman"
+  });
+
+  const stdout = capture();
+  const stderr = capture();
+
+  // 1. backup: exit 127 preserves volumesPurged; nonzero != 127 clears volumesPurged
+  await saveConfig(root, { ...config, volumesPurged: true });
+  const backup127Code = await run(["backup"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("run")) return 127;
+      return 0;
+    })
+  });
+  assert.equal(backup127Code, 127);
+  assert.equal((await loadConfig(root)).volumesPurged, true, "backup exit 127 must preserve volumesPurged");
+
+  const backupFailCode = await run(["backup"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("run")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(backupFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, undefined, "backup nonzero exit != 127 must clear volumesPurged");
+
+  // 2. workspace add: exit 127 preserves volumesPurged; nonzero != 127 clears volumesPurged
+  await saveConfig(root, { ...config, volumesPurged: true });
+  const ws127Code = await run(["workspace", "add", workspaceDir], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 127;
+      return 0;
+    })
+  });
+  assert.equal(ws127Code, 127);
+  assert.equal((await loadConfig(root)).volumesPurged, true, "workspace add exit 127 must preserve volumesPurged");
+
+  const wsFailCode = await run(["workspace", "remove", workspaceDir], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(wsFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, undefined, "workspace remove nonzero exit != 127 must clear volumesPurged");
+
+  // 3. user enable / add: exit 127 preserves volumesPurged; nonzero != 127 clears volumesPurged
+  await saveConfig(root, { ...config, volumesPurged: true });
+  const user127Code = await run(["user", "enable"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 127;
+      return 0;
+    })
+  });
+  assert.equal(user127Code, 127);
+  assert.equal((await loadConfig(root)).volumesPurged, true, "user enable exit 127 must preserve volumesPurged");
+
+  const userAddFailCode = await run(["user", "add", "user:Ab12cd34Ef56"], {
+    env: { SPACEAPP_HOME: root },
+    platform: "linux",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    execute: mockPodmanInfo(async (spec) => {
+      if (spec.args?.includes("up")) return 1;
+      return 0;
+    })
+  });
+  assert.equal(userAddFailCode, 1);
+  assert.equal((await loadConfig(root)).volumesPurged, undefined, "user add nonzero exit != 127 must clear volumesPurged");
+});
+
+
 
 
 

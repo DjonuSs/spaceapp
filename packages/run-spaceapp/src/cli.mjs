@@ -545,7 +545,7 @@ export async function run(argv, {
   if (["up", "down", "status", "logs"].includes(command)) {
     assertNoArgs(args, command);
     const code = await runtimeExecute(composeCommand(command, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-    if (command === "up" && config?.volumesPurged) {
+    if (command === "up" && code !== 127 && config?.volumesPurged) {
       delete config.volumesPurged;
       await saveConfig(root, config);
     }
@@ -676,6 +676,11 @@ export async function run(argv, {
       return pullCode;
     }
     const upCode = await runtimeExecute(composeCommand("up", root, { profile: rollback.profile, companionsEnabled: rollback.companionsEnabled, engine: rollback.engine }), { stdin, stdout, stderr });
+    if (upCode !== 127 && config?.volumesPurged) {
+      delete config.volumesPurged;
+      delete rollback.volumesPurged;
+      await saveConfig(root, config);
+    }
     if (upCode !== 0) {
       await writeRuntimeFiles(root, config);
       return upCode;
@@ -719,7 +724,7 @@ export async function run(argv, {
       // Exit 3: the restore changed nothing or put every database and file back, so SpaceApp starts again as it was (1.1.8).
       if (restoreCode === RESTORE_UNCHANGED_EXIT) {
         const againCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-        if (againCode === 0 && config?.volumesPurged) {
+        if (againCode !== 127 && config?.volumesPurged) {
           delete config.volumesPurged;
           await saveConfig(root, config);
         }
@@ -732,11 +737,11 @@ export async function run(argv, {
       return restoreCode;
     }
     const upCode = await runtimeExecute(composeCommand("up", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, engine: config.engine }), { stdin, stdout, stderr });
-    if (upCode !== 0) return upCode;
-    if (config?.volumesPurged) {
+    if (upCode !== 127 && config?.volumesPurged) {
       delete config.volumesPurged;
       await saveConfig(root, config);
     }
+    if (upCode !== 0) return upCode;
     await restoreBackupExtras({ root, config, backupId, stdin, stdout, stderr, execute: runtimeExecute })
       .catch((error) => stderr.write(`The data was restored; the CLI settings of the backup were not: ${error.message}\n`));
     return 0;
@@ -1752,11 +1757,19 @@ async function performUpdate({
     }
     if (await verifyStorage({ root, config: updated, existingConfig: config, operation: "upgrade", inspectResources, execute, stdout, stderr }) !== 0) return 1;
     checkpoint = await createQuiescedCheckpoint(root, config, {stdin, stdout, stderr, execute, platform});
+    if (!config?.volumesPurged && updated?.volumesPurged) {
+      delete updated.volumesPurged;
+    }
     await commitInstallation(root, updated, { persistConfig: false });
     const upCode = await execute(
       composeCommand("up", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled, engine: updated.engine }),
       { stdin, stdout, stderr }
     );
+    if (upCode !== 127 && (config?.volumesPurged || updated?.volumesPurged)) {
+      delete config.volumesPurged;
+      delete updated.volumesPurged;
+      await saveConfig(root, config);
+    }
     if (upCode !== 0) {
       const engineLabel = updated.engine === "podman" ? "Podman" : "Docker";
       throw new Error(`Runtime start failed with ${engineLabel} exit ${upCode}.`);
@@ -1867,6 +1880,10 @@ async function backupWithWritersPaused(execute, root, config, io) {
   let resumeCode = 1;
   try {
     backupCode = await execute(composeCommand("backup", root, options), io);
+    if (backupCode !== 127 && config?.volumesPurged) {
+      delete config.volumesPurged;
+      await saveConfig(root, config);
+    }
   } finally {
     resumeCode = await execute(composeCommand("unpauseWriters", root, options), io).catch(() => 1);
     if (resumeCode !== 0) io.stderr.write(`SpaceApp writers could not be resumed (exit ${resumeCode}). Run "${UNIVERSAL_COMMAND} up".\n`);
@@ -1887,6 +1904,10 @@ async function createQuiescedCheckpoint(root, config, io) {
   try {
     io.stdout.write("Ensuring the existing PostgreSQL database is ready for the checkpoint...\n");
     const databaseCode = await io.execute(composeCommand("ensureCheckpointDatabase", root, config), io);
+    if (databaseCode !== 127 && config?.volumesPurged) {
+      delete config.volumesPurged;
+      await saveConfig(root, config);
+    }
     if (databaseCode !== 0) throw new Error(`The existing PostgreSQL database did not become ready (exit ${databaseCode}). The upgrade was not applied.`);
     const code = await io.execute(composeCommand("stopForRestore", root, config), io);
     if (code !== 0) throw new Error(`Could not pause SpaceApp writers (exit ${code}).`);
@@ -2282,6 +2303,10 @@ async function workspaceCommand(rawArgs, { root, config, platform, stdin, stdout
   const applyWorkspaces = async (updated) => {
     // A user's mounts belong to their own container; "up" recreates only the services whose mounts changed.
     const code = await execute(composeCommand(userId ? "up" : "syncWorkspaces", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled, engine: updated.engine }), { stdin, stdout, stderr });
+    if (code !== 127 && updated?.volumesPurged) {
+      delete updated.volumesPurged;
+      await saveConfig(root, updated);
+    }
     if (code !== 0) stderr.write(`The change is saved, but the running services could not pick it up. Run "${UNIVERSAL_COMMAND} up".\n`);
     return code;
   };
@@ -2450,6 +2475,10 @@ async function credentialsCommand(rawArgs, { root, config, stdin, stdout, stderr
       composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout, stderr }
     );
+    if (syncCode !== 127 && config?.volumesPurged) {
+      delete config.volumesPurged;
+      await saveConfig(root, config);
+    }
     if (syncCode !== 0) {
       stderr.write(`Credential stored for ${provider}, but the CLI service could not be refreshed.\n`);
       return syncCode;
@@ -2466,6 +2495,10 @@ async function credentialsCommand(rawArgs, { root, config, stdin, stdout, stderr
       composeCommand("syncCredentials", root, { profile: config.profile, companionsEnabled: config.companionsEnabled, service, engine: config.engine }),
       { stdin, stdout, stderr }
     );
+    if (syncCode !== 127 && config?.volumesPurged) {
+      delete config.volumesPurged;
+      await saveConfig(root, config);
+    }
     if (syncCode !== 0) {
       stderr.write(`Credential file state changed for ${provider}, but the CLI service could not be refreshed.\n`);
       return syncCode;
@@ -2509,6 +2542,10 @@ async function userCommand(args, { root, config, stdin, stdout, stderr, execute,
     await writeRuntimeFiles(root, updated);
     stdout.write(message);
     const code = await execute(composeCommand("up", root, { profile: updated.profile, companionsEnabled: updated.companionsEnabled, engine: updated.engine }), { stdin, stdout, stderr });
+    if (code !== 127 && updated.volumesPurged) {
+      delete updated.volumesPurged;
+      await saveConfig(root, updated);
+    }
     if (code !== 0) stderr.write(`The change is saved, but the running services could not pick it up. Run "${UNIVERSAL_COMMAND} up".\n`);
     return code;
   };
@@ -2569,7 +2606,12 @@ async function providerCommand(rawArgs, { root, config, stdin, stdout, stderr, e
   stdout.write(`Installing optional provider ${provider} into ${userId ? `the private provider volume of ${userId}` : "this installation's private provider volume"}.\n`);
   // Keep the existing Claude path compatible with older runtime images.
   const action=provider === "claude" ? "installClaude" : "installProvider";
-  return execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, service, engine: config.engine }), { stdin, stdout, stderr });
+  const code = await execute(composeCommand(action, root, { profile: config.profile, companionsEnabled: config.companionsEnabled, provider, service, engine: config.engine }), { stdin, stdout, stderr });
+  if (action === "installClaude" && code !== 127 && config?.volumesPurged) {
+    delete config.volumesPurged;
+    await saveConfig(root, config);
+  }
+  return code;
 }
 
 /**
