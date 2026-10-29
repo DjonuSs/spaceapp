@@ -739,7 +739,7 @@ export function podmanInstallHelp(platform) {
  * @param {object} [options.stdout] Standard output stream.
  * @returns {Promise<{ ok: boolean, code: number }>} Result object indicating success or failure.
  */
-export async function checkMacPodmanMachine({ execute, profile = "small", stderr, stdout }) {
+export async function checkMacPodmanMachine({ execute, profile = "small", autoProfile = false, stderr, stdout }) {
   let output = "";
   const captureStream = new Writable({
     write(chunk, _encoding, done) {
@@ -813,6 +813,25 @@ export async function checkMacPodmanMachine({ execute, profile = "small", stderr
       else diskBytes = val;
     }
   }
+  const fitsProfile = (candidate) => {
+    const candidateReq = PROFILE_REQUIREMENTS[candidate];
+    if (!candidateReq) return true;
+    const candidateEngineMem = { small: 3, medium: 5, large: 7, light: 3, standard: 3 }[candidate] * 1024 ** 3;
+    const candidateMinMem = Math.min(candidateReq.memoryBytes, candidateEngineMem);
+    return (
+      (cpus === 0 || cpus >= candidateReq.cpuCount) &&
+      (memBytes === 0 || memBytes >= candidateMinMem) &&
+      (diskBytes === 0 || diskBytes >= candidateReq.freshDiskBytes)
+    );
+  };
+  if (autoProfile && !fitsProfile(profile)) {
+    const autoOrder = ["large", "medium", "small"];
+    const startIndex = Math.max(0, autoOrder.indexOf(profile));
+    const viable = autoOrder.slice(startIndex + 1).find((candidate) => fitsProfile(candidate));
+    if (viable) {
+      return { ok: true, code: 0, profile: viable };
+    }
+  }
   const engineMemoryBytes = { small: 3, medium: 5, large: 7, light: 3, standard: 3 }[profile] * 1024 ** 3;
   const minMem = Math.min(req.memoryBytes, engineMemoryBytes);
   const cpusOk = cpus === 0 || cpus >= req.cpuCount;
@@ -831,20 +850,21 @@ export async function checkMacPodmanMachine({ execute, profile = "small", stderr
     );
     return { ok: false, code: 1 };
   }
-  return { ok: true, code: 0 };
+  return { ok: true, code: 0, profile };
 }
 
 /**
  * Ensures that Podman and its compose provider are available and ready.
  * On macOS, validates that the Podman machine has sufficient CPU, memory, and disk.
  *
- * @param {object} options Options including platform, execute, profile, stderr, stdout.
- * @returns {Promise<{ code: number, reexecuted: boolean }>}
+ * @param {object} options Options including platform, execute, profile, autoProfile, stderr, stdout.
+ * @returns {Promise<{ code: number, reexecuted: boolean, profile?: string }>}
  */
 export async function ensurePodmanAvailable({
   platform = process.platform,
   execute,
   profile = "small",
+  autoProfile = false,
   stderr = process.stderr,
   stdout = process.stdout
 }) {
@@ -854,12 +874,13 @@ export async function ensurePodmanAvailable({
     return { code: 1, reexecuted: false };
   }
   if (platform === "darwin") {
-    const check = await checkMacPodmanMachine({ execute, profile, stderr, stdout });
+    const check = await checkMacPodmanMachine({ execute, profile, autoProfile, stderr, stdout });
     if (!check.ok) {
       return { code: check.code || 1, reexecuted: false };
     }
+    return { code: 0, reexecuted: false, profile: check.profile ?? profile };
   }
-  return { code: 0, reexecuted: false };
+  return { code: 0, reexecuted: false, profile };
 }
 
 /**

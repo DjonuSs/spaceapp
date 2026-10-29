@@ -1439,6 +1439,59 @@ test("backup, workspace sync, and user lifecycle clear volumesPurged when compos
   assert.equal((await loadConfig(root)).volumesPurged, undefined, "user add nonzero exit != 127 must clear volumesPurged");
 });
 
+test("macOS install with auto profile down-selects to viable Podman Machine profile instead of rejecting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "spaceapp-darwin-auto-podman-"));
+  const stdout = capture();
+  const stderr = capture();
+
+  const code = await run(["install", "--engine", "podman", "--no-open", "--non-interactive", "--answers", '{"confirm": true}'], {
+    env: { SPACEAPP_HOME: root },
+    platform: "darwin",
+    stdout: stdout.stream,
+    stderr: stderr.stream,
+    // Host has 32 GiB RAM (auto selects "large" initially)
+    inspectResources: async () => ({
+      cpuCount: 12,
+      totalMemoryBytes: 32 * 1024 ** 3,
+      freeDiskBytes: 200 * 1024 ** 3
+    }),
+    request: readyRequest,
+    sleep: async () => {},
+    execute: async (spec, io) => {
+      if (spec.command === "podman" && spec.args?.includes("machine") && spec.args?.includes("inspect")) {
+        // Podman Machine only supports "small" (4 CPUs, 4 GiB RAM, 25 GiB disk)
+        io?.stdout?.write(JSON.stringify([{
+          CPUs: 4,
+          Memory: 4 * 1024 ** 3,
+          DiskSize: 25 * 1024 ** 3,
+          Running: true
+        }]));
+        return 0;
+      }
+      if (spec.command === "podman" && spec.args?.includes("info") && spec.args?.some((a) => a.includes("json"))) {
+        io?.stdout?.write(JSON.stringify({
+          version: { Version: "5.2.0" },
+          host: {
+            cpus: 4,
+            memTotal: 4 * 1024 ** 3,
+            security: { rootless: true },
+            cgroupVersion: "v2",
+            cgroupControllers: ["cpu", "memory", "pids"]
+          }
+        }));
+        return 0;
+      }
+      return 0;
+    }
+  });
+
+  assert.equal(code, 0, `expected install to succeed, stderr: ${stderr.value()}`);
+  const saved = await loadConfig(root);
+  assert.equal(saved.profile, "small", "auto profile must down-select to small based on Podman Machine resources");
+  assert.match(stdout.value(), /Podman resources select profile: small\./);
+});
+
+
 
 
 

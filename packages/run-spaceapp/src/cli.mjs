@@ -945,6 +945,7 @@ async function installCommand(args, {
   }
 
   stage = engine;
+  const canAutoAdjustProfile = requestedProfile === "auto" && (!existingConfig || Boolean(existingConfig.volumesPurged));
   let prerequisiteResult;
   if (engine === "podman") {
     prerequisiteResult = await ensurePodmanAvailable({
@@ -955,8 +956,14 @@ async function installCommand(args, {
       stdout,
       stderr,
       execute,
-      profile
+      profile,
+      autoProfile: canAutoAdjustProfile
     });
+    if (prerequisiteResult.profile && prerequisiteResult.profile !== profile) {
+      profile = prerequisiteResult.profile;
+      result.config = { ...result.config, profile };
+      stdout.write(`${engineLabel} resources select profile: ${profile}.\n`);
+    }
   } else {
     prerequisiteResult = await ensureDocker({
       platform,
@@ -982,9 +989,10 @@ async function installCommand(args, {
   stage = "doctor";
 
   let storagePlan = await inspectStoragePlan({ root, config: result.config, existingConfig, resources, execute, operation });
-  if (requestedProfile === "auto" && !existingConfig) {
+  if (canAutoAdjustProfile) {
+    const profileRank = { light: 0, small: 1, standard: 1, medium: 2, large: 3 };
     const engineProfile = resolveInstallProfile("auto", storagePlan.resources);
-    if (engineProfile !== profile) {
+    if (engineProfile !== profile && (profileRank[engineProfile] ?? 99) < (profileRank[profile] ?? 99)) {
       profile = engineProfile;
       result.config = { ...result.config, profile };
       stdout.write(`${engineLabel} resources select profile: ${profile}.\n`);
