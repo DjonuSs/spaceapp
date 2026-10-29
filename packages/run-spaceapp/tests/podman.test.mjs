@@ -293,6 +293,7 @@ test("macOS Podman Machine checks resource sizing against profile requirements a
           CPUs: 1,
           Memory: 1024 * 1024 * 1024,
           DiskSize: 10 * 1024 * 1024 * 1024,
+          VMType: "qemu",
           Running: true
         }]));
         return 0;
@@ -1525,7 +1526,7 @@ test("checkMacPodmanMachine selects running named machine from list and emits ba
   assert.match(stderr1.value(), /podman machine set --cpus 4 --memory 3072 --disk-size 20 dev-vm/);
   assert.match(stderr1.value(), /podman machine start dev-vm/);
 
-  // 2. Non-QEMU provider ("applehv") advises replacement with podman machine init after backup confirmation, without podman machine set or unconditional rm
+  // 2. Non-QEMU provider ("applehv") advises replacement with podman machine rm (without --force) and init after backup and deletion warning
   const stdout2 = capture();
   const stderr2 = capture();
   const res2 = await checkMacPodmanMachine({
@@ -1544,9 +1545,12 @@ test("checkMacPodmanMachine selects running named machine from list and emits ba
   });
   assert.equal(res2.ok, false);
   assert.match(stderr2.value(), /does not support in-place resizing with "podman machine set"/);
-  assert.match(stderr2.value(), /Back up any required data from "mac-hv" and confirm the destructive replacement/);
+  assert.match(stderr2.value(), /Back up any required data from "mac-hv"\. The "podman machine rm" command permanently deletes the machine and its data\./);
+  assert.match(stderr2.value(), /podman machine stop mac-hv/);
+  assert.match(stderr2.value(), /podman machine rm mac-hv/);
+  assert.doesNotMatch(stderr2.value(), /--force/);
   assert.match(stderr2.value(), /podman machine init --cpus 4 --memory 3072 --disk-size 20 mac-hv/);
-  assert.doesNotMatch(stderr2.value(), /podman machine rm/);
+  assert.match(stderr2.value(), /podman machine start mac-hv/);
 });
 
 

@@ -858,21 +858,20 @@ export async function checkMacPodmanMachine({ execute, profile = "small", autoPr
     const vmType = String(machine.VMType ?? machine.vmType ?? machine.Provider ?? machine.provider ?? "").trim().toLowerCase();
     const reqMemMib = Math.ceil(minMem / (1024 ** 2));
     const reqDiskGib = Math.max(20, Math.ceil(req.freshDiskBytes / (1024 ** 3)));
-    const resizeGuidance = vmType && vmType !== "qemu"
-      ? `The "${vmType}" Podman machine provider does not support in-place resizing with "podman machine set".\n` +
-        `Back up any required data from "${machineName}" and confirm the destructive replacement before removing the existing machine, then create and start a replacement machine with:\n` +
-        `  podman machine stop ${machineName}\n` +
-        `  podman machine init --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
-        `  podman machine start ${machineName}\n`
-      : "To resize your QEMU Podman machine, run:\n" +
+    const replacementGuidance =
+      `Back up any required data from "${machineName}". The "podman machine rm" command permanently deletes the machine and its data. Confirm the replacement before running it, then create and start a replacement machine with:\n` +
+      `  podman machine stop ${machineName}\n` +
+      `  podman machine rm ${machineName}\n` +
+      `  podman machine init --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
+      `  podman machine start ${machineName}\n`;
+    const resizeGuidance = vmType === "qemu"
+      ? "To resize your QEMU Podman machine, run:\n" +
         `  podman machine stop ${machineName}\n` +
         `  podman machine set --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
-        `  podman machine start ${machineName}\n` +
-        (vmType === "qemu"
-          ? ""
-          : `For non-QEMU macOS providers (such as applehv or libkrun), resizing requires creating a replacement machine. Back up any required data and confirm the destructive replacement before removing "${machineName}", then run:\n` +
-            `  podman machine init --cpus ${req.cpuCount} --memory ${reqMemMib} --disk-size ${reqDiskGib} ${machineName}\n` +
-            `  podman machine start ${machineName}\n`);
+        `  podman machine start ${machineName}\n`
+      : vmType
+        ? `The "${vmType}" Podman machine provider does not support in-place resizing with "podman machine set".\n` + replacementGuidance
+        : `For non-QEMU macOS providers, resizing requires creating a replacement machine.\n` + replacementGuidance;
     stderr?.write(
       `The Podman machine does not have sufficient resources for the "${profile}" profile.\n` +
       `Required: ${req.cpuCount} CPUs, ${gib(minMem)} GiB memory, ${gib(req.freshDiskBytes)} GiB disk.\n` +
